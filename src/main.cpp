@@ -87,17 +87,20 @@ int main(int argc, char** argv)
 	ros::init(argc, argv, "norlab_teach_repeat_node");
 	ros::NodeHandle nodeHandle;
 	
-	client = std::unique_ptr<actionlib::SimpleActionClient<path_msgs::FollowPathAction>>(
-			new actionlib::SimpleActionClient<path_msgs::FollowPathAction>("follow_path", true));
-	client->waitForServer();
-	
-	ros::Subscriber poseSubscriber = nodeHandle.subscribe("pose", 1000, poseCallback);
+	ros::Subscriber poseSubscriber = nodeHandle.subscribe("pose_in", 1000, poseCallback);
 	ros::Subscriber trajectoryResultSubscriber = nodeHandle.subscribe("follow_path/result", 1000, trajectoryResultCallback);
 	
 	ros::ServiceServer startRecordingService = nodeHandle.advertiseService("start_recording", startRecordingCallback);
 	ros::ServiceServer stopRecordingService = nodeHandle.advertiseService("stop_recording", stopRecordingCallback);
 	ros::ServiceServer clearTrajectoryService = nodeHandle.advertiseService("clear_trajectory", clearTrajectoryCallback);
 	ros::ServiceServer playTrajectoryService = nodeHandle.advertiseService("play_trajectory", playTrajectoryCallback);
+	
+	client = std::unique_ptr<actionlib::SimpleActionClient<path_msgs::FollowPathAction>>(
+			new actionlib::SimpleActionClient<path_msgs::FollowPathAction>("follow_path", true));
+	
+	ROS_INFO("Waiting for server...");
+	client->waitForServer();
+	ROS_INFO("Connected to server");
 	
 	ros::spin();
 	
