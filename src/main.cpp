@@ -7,6 +7,7 @@
 #include <path_msgs/FollowPathAction.h>
 #include <actionlib/client/simple_action_client.h>
 
+ros::Publisher pathPublisher;
 std::unique_ptr<actionlib::SimpleActionClient<path_msgs::FollowPathAction>> client;
 std::atomic_bool recording(false);
 std::atomic_bool playing(false);
@@ -76,8 +77,14 @@ bool playTrajectoryCallback(std_srvs::Empty::Request& req, std_srvs::Empty::Resp
 	trajectoryMutex.unlock();
 	goal.goal.follower_options.velocity = 1.0;
 	goal.goal.follower_options.init_mode = path_msgs::FollowerOptions::INIT_MODE_CONTINUE;
-	
 	client->sendGoal(goal.goal);
+
+	path_msgs::PathSequence pathSequence;
+    trajectoryMutex.lock();
+    pathSequence.paths.push_back(trajectory);
+    trajectoryMutex.unlock();
+	pathSequence.header.frame_id = "odom";
+	pathPublisher.publish(pathSequence);
 	
 	return true;
 }
@@ -89,6 +96,8 @@ int main(int argc, char** argv)
 	
 	ros::Subscriber poseSubscriber = nodeHandle.subscribe("pose_in", 1000, poseCallback);
 	ros::Subscriber trajectoryResultSubscriber = nodeHandle.subscribe("follow_path/result", 1000, trajectoryResultCallback);
+
+	pathPublisher = nodeHandle.advertise<path_msgs::PathSequence>("path", 1000);
 	
 	ros::ServiceServer startRecordingService = nodeHandle.advertiseService("start_recording", startRecordingCallback);
 	ros::ServiceServer stopRecordingService = nodeHandle.advertiseService("stop_recording", stopRecordingCallback);
@@ -97,6 +106,7 @@ int main(int argc, char** argv)
 	
 	client = std::unique_ptr<actionlib::SimpleActionClient<path_msgs::FollowPathAction>>(
 			new actionlib::SimpleActionClient<path_msgs::FollowPathAction>("follow_path", true));
+	trajectory.forward = true;
 	
 	ROS_INFO("Waiting for server...");
 	client->waitForServer();
