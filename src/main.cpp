@@ -75,7 +75,7 @@ bool playTrajectoryCallback(std_srvs::Empty::Request& req, std_srvs::Empty::Resp
 	trajectoryMutex.lock();
 	goal.goal.path.paths.push_back(trajectory);
 	trajectoryMutex.unlock();
-	goal.goal.follower_options.velocity = 1.0;
+	goal.goal.follower_options.velocity = 5.0;
 	goal.goal.follower_options.init_mode = path_msgs::FollowerOptions::INIT_MODE_CONTINUE;
 	client->sendGoal(goal.goal);
 
@@ -83,7 +83,7 @@ bool playTrajectoryCallback(std_srvs::Empty::Request& req, std_srvs::Empty::Resp
     trajectoryMutex.lock();
     pathSequence.paths.push_back(trajectory);
     trajectoryMutex.unlock();
-	pathSequence.header.frame_id = "odom";
+	pathSequence.header.frame_id = "map";
 	pathPublisher.publish(pathSequence);
 	
 	return true;
