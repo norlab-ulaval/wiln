@@ -17,6 +17,7 @@ path_msgs::DirectionalPath trajectory;
 std::mutex trajectoryMutex;
 
 const std::map<int8_t, std::string> FOLLOW_PATH_RESULTS = {
+		{ 0u, "RESULT_STATUS_TOO_FAR_FROM_PATH" },
 		{ 1u, "RESULT_STATUS_UNKNOWN" },
 		{ 2u, "RESULT_STATUS_OBSTACLE" },
 		{ 3u, "RESULT_STATUS_SUCCESS" },
@@ -42,9 +43,11 @@ void trajectoryResultCallback(const path_msgs::FollowPathActionResult& trajector
 {
 	playing = false;
 	
-	std::cout << "Result text: " << trajectoryResult.status.text << std::endl; // just to see what it does, to remove
-	
-	if(trajectoryResult.result.status != path_msgs::FollowPathResult::RESULT_STATUS_SUCCESS)
+	if(trajectoryResult.result.status == path_msgs::FollowPathResult::RESULT_STATUS_SUCCESS)
+	{
+		ROS_INFO("Successfully reached goal!");
+	}
+	else
 	{
 		ROS_WARN_STREAM("Trajectory goal was not reached, got status " + FOLLOW_PATH_RESULTS.at(trajectoryResult.result.status) + ".");
 	}
