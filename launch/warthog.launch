@@ -1,0 +1,17 @@
+<launch>
+	<node pkg="odom_to_pose_converter" type="odom_to_pose_converter_node" name="odom_to_pose_converter_node" output="screen">
+		<remap from="odom_in" to="/icp_odom" />
+	</node>
+
+	<node pkg="norlab_teach_repeat" type="norlab_teach_repeat_node" name="norlab_teach_repeat_node" output="screen">
+		<remap from="pose_in" to="pose" />
+		<param name="trajectory_frame" value="map" />
+		<param name="trajectory_speed" value="1.0" />
+	</node>
+
+	<include file="$(find norlab_teach_repeat)/params/warthog_params.launch" />
+	<node pkg="path_follower" type="path_follower_node" name="path_follower" output="screen">
+		<remap from="odom" to="/icp_odom" />
+		<param name="controller_type" value="kinematic_HBZ" />
+	</node>
+</launch>

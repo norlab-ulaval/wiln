@@ -17,7 +17,7 @@ path_msgs::DirectionalPath trajectory;
 std::mutex trajectoryMutex;
 
 const std::map<int8_t, std::string> FOLLOW_PATH_RESULTS = {
-		{ 0u, "RESULT_STATUS_TOO_FAR_FROM_PATH" },
+		{ 0u, "RESULT_STATUS_STOPPED_BY_SUPERVISOR" },
 		{ 1u, "RESULT_STATUS_UNKNOWN" },
 		{ 2u, "RESULT_STATUS_OBSTACLE" },
 		{ 3u, "RESULT_STATUS_SUCCESS" },
@@ -95,6 +95,7 @@ bool playTrajectoryCallback(std_srvs::Empty::Request& req, std_srvs::Empty::Resp
 	trajectoryMutex.lock();
 	goal.goal.path.paths.push_back(trajectory);
 	trajectoryMutex.unlock();
+	goal.goal.path.header.frame_id = trajectoryFrame;
 	goal.goal.follower_options.velocity = trajectorySpeed;
 	goal.goal.follower_options.init_mode = path_msgs::FollowerOptions::INIT_MODE_CONTINUE;
 	client->sendGoal(goal.goal);
@@ -113,9 +114,10 @@ int main(int argc, char** argv)
 {
 	ros::init(argc, argv, "norlab_teach_repeat_node");
 	ros::NodeHandle nodeHandle;
+	ros::NodeHandle privateNodeHandle("~");
 	
-	nodeHandle.param<float>("trajectory_speed", trajectorySpeed, 5.0);
-	nodeHandle.param<std::string>("trajectory_frame", trajectoryFrame, "odom");
+	privateNodeHandle.param<float>("trajectory_speed", trajectorySpeed, 5.0);
+	privateNodeHandle.param<std::string>("trajectory_frame", trajectoryFrame, "odom");
 	
 	ros::Subscriber poseSubscriber = nodeHandle.subscribe("pose_in", 1000, poseCallback);
 	ros::Subscriber trajectoryResultSubscriber = nodeHandle.subscribe("follow_path/result", 1000, trajectoryResultCallback);
