@@ -13,7 +13,6 @@
 
 	<node pkg="norlab_teach_repeat" type="norlab_teach_repeat_node" name="norlab_teach_repeat_node" output="screen">
 		<remap from="pose_in" to="pose" />
-		<param name="trajectory_frame" value="/odometry/filtered" />
 	</node>
 
 	<include file="$(find norlab_teach_repeat)/params/simulation_params.launch" />
