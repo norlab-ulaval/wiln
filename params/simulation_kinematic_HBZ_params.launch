@@ -1,12 +1,7 @@
 <launch>
-	<group ns="gerona" >
-		<param name="world_frame" value="map" />
-		<param name="odom_frame" value="map" />
-		<param name="robot_frame" value="base_link" />
-	</group>
 	<group ns="path_follower">
-		<param name="min_velocity" value="0.2" />
-		<param name="max_velocity" value="2.0" />
+		<param name="min_velocity" value="0.5" />
+		<param name="max_velocity" value="2.5" />
 		<param name="waypoint_tolerance" value="0.8" />
 		<param name="goal_tolerance" value="0.1" />
 
@@ -54,7 +49,7 @@
 				<param name="alpha_l" value="1.0" />
 				<param name="alpha_r" value="1.0" />
 
-				<param name="max_angular_velocity" value="2.0" />
+				<param name="max_angular_velocity" value="0.5" />
 				<param name="epsilon" value="0.5" />
 				<param name="b" value="0.2" />
 

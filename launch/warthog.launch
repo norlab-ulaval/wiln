@@ -8,9 +8,12 @@
 		<param name="trajectory_speed" value="1.0" />
 	</node>
 
-	<include file="$(find norlab_teach_repeat)/params/warthog_params.launch" />
+	<include file="$(find norlab_teach_repeat)/params/warthog_kinematic_HBZ_params.launch" />
 	<node pkg="path_follower" type="path_follower_node" name="path_follower" output="screen">
 		<remap from="odom" to="/icp_odom" />
+		<param name="world_frame" value="map" />
+		<param name="odom_frame" value="map" />
+		<param name="robot_frame" value="base_link" />
 		<param name="controller_type" value="kinematic_HBZ" />
 	</node>
 </launch>
