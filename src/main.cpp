@@ -29,14 +29,6 @@ const std::map<int8_t, std::string> FOLLOW_PATH_RESULTS = {
 		{ 9u, "RESULT_STATUS_TIMEOUT" },
 };
 
-void plannedTrajectoryCallback(const geometry_msgs::PoseStamped& poseStamped)
-{
-	if(recording)
-	{
-		plannedTrajectory.poses.push_back(poseStamped);
-	}
-}
-
 void publishTrajectory(const ros::Publisher& publisher, path_msgs::DirectionalPath& trajectory, const std::string& frame_id, const ros::Time& stamp)
 {
 	trajectory.header.frame_id = frame_id;
@@ -49,6 +41,15 @@ void publishTrajectory(const ros::Publisher& publisher, path_msgs::DirectionalPa
 	pathSequence.paths.push_back(trajectory);
 	
 	publisher.publish(pathSequence);
+}
+
+void plannedTrajectoryCallback(const geometry_msgs::PoseStamped& poseStamped)
+{
+	if(recording)
+	{
+		plannedTrajectory.poses.push_back(poseStamped);
+		publishTrajectory(plannedTrajectoryPublisher, plannedTrajectory, poseStamped.header.frame_id, ros::Time::now());
+	}
 }
 
 void realTrajectoryCallback(const geometry_msgs::PoseStamped& poseStamped)
@@ -101,12 +102,6 @@ bool stopRecordingServiceCallback(std_srvs::Empty::Request& req, std_srvs::Empty
 	}
 	
 	recording = false;
-	
-	if(!plannedTrajectory.poses.empty())
-	{
-		publishTrajectory(plannedTrajectoryPublisher, plannedTrajectory, plannedTrajectory.poses[0].header.frame_id, ros::Time::now());
-	}
-	
 	return true;
 }
 
