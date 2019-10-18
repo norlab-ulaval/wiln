@@ -2,17 +2,19 @@
 #include <std_srvs/Empty.h>
 #include <geometry_msgs/PoseStamped.h>
 #include <path_msgs/DirectionalPath.h>
-#include <path_msgs/FollowPathActionResult.h>
-#include <mutex>
+#include <path_msgs/FollowPathGoal.h>
 #include <path_msgs/FollowPathAction.h>
+#include <path_msgs/FollowPathActionResult.h>
 #include <actionlib/client/simple_action_client.h>
 
+ros::Publisher plannedTrajectoryPublisher;
+ros::Publisher realTrajectoryPublisher;
 float trajectorySpeed;
-ros::Publisher pathPublisher;
-std::unique_ptr<actionlib::SimpleActionClient<path_msgs::FollowPathAction>> client;
-std::atomic_bool recording(false);
-std::atomic_bool playing(false);
-path_msgs::DirectionalPath trajectory;
+bool recording;
+bool playing;
+std::unique_ptr<actionlib::SimpleActionClient<path_msgs::FollowPathAction>> actionlibClient;
+path_msgs::DirectionalPath plannedTrajectory;
+path_msgs::DirectionalPath realTrajectory;
 
 const std::map<int8_t, std::string> FOLLOW_PATH_RESULTS = {
 		{ 0u, "RESULT_STATUS_STOPPED_BY_SUPERVISOR" },
@@ -27,11 +29,34 @@ const std::map<int8_t, std::string> FOLLOW_PATH_RESULTS = {
 		{ 9u, "RESULT_STATUS_TIMEOUT" },
 };
 
-void poseCallback(const geometry_msgs::PoseStamped& poseStamped)
+void plannedTrajectoryCallback(const geometry_msgs::PoseStamped& poseStamped)
 {
 	if(recording)
 	{
-		trajectory.poses.push_back(poseStamped);
+		plannedTrajectory.poses.push_back(poseStamped);
+	}
+}
+
+void publishTrajectory(const ros::Publisher& publisher, path_msgs::DirectionalPath& trajectory, const std::string& frame_id, const ros::Time& stamp)
+{
+	trajectory.header.frame_id = frame_id;
+	trajectory.header.stamp = stamp;
+	trajectory.forward = true;
+	
+	path_msgs::PathSequence pathSequence;
+	pathSequence.header.frame_id = frame_id;
+	pathSequence.header.stamp = stamp;
+	pathSequence.paths.push_back(trajectory);
+	
+	publisher.publish(pathSequence);
+}
+
+void realTrajectoryCallback(const geometry_msgs::PoseStamped& poseStamped)
+{
+	if(playing)
+	{
+		realTrajectory.poses.push_back(poseStamped);
+		publishTrajectory(realTrajectoryPublisher, realTrajectory, poseStamped.header.frame_id, ros::Time::now());
 	}
 }
 
@@ -49,8 +74,14 @@ void trajectoryResultCallback(const path_msgs::FollowPathActionResult& trajector
 	}
 }
 
-bool startRecordingCallback(std_srvs::Empty::Request& req, std_srvs::Empty::Response& res)
+bool startRecordingServiceCallback(std_srvs::Empty::Request& req, std_srvs::Empty::Response& res)
 {
+	if(recording)
+	{
+		ROS_WARN("Trajectory is already being recorded.");
+		return false;
+	}
+	
 	if(playing)
 	{
 		ROS_WARN("Cannot start recording, trajectory is currently being played.");
@@ -61,19 +92,31 @@ bool startRecordingCallback(std_srvs::Empty::Request& req, std_srvs::Empty::Resp
 	return true;
 }
 
-bool stopRecordingCallback(std_srvs::Empty::Request& req, std_srvs::Empty::Response& res)
+bool stopRecordingServiceCallback(std_srvs::Empty::Request& req, std_srvs::Empty::Response& res)
 {
+	if(!recording)
+	{
+		ROS_WARN("Trajectory is already not being recorded.");
+		return false;
+	}
+	
 	recording = false;
+	
+	if(!plannedTrajectory.poses.empty())
+	{
+		publishTrajectory(plannedTrajectoryPublisher, plannedTrajectory, plannedTrajectory.poses[0].header.frame_id, ros::Time::now());
+	}
+	
 	return true;
 }
 
-bool clearTrajectoryCallback(std_srvs::Empty::Request& req, std_srvs::Empty::Response& res)
+bool clearTrajectoryServiceCallback(std_srvs::Empty::Request& req, std_srvs::Empty::Response& res)
 {
-	trajectory.poses.clear();
+	plannedTrajectory.poses.clear();
 	return true;
 }
 
-bool playTrajectoryCallback(std_srvs::Empty::Request& req, std_srvs::Empty::Response& res)
+bool playTrajectoryServiceCallback(std_srvs::Empty::Request& req, std_srvs::Empty::Response& res)
 {
 	if(playing)
 	{
@@ -81,33 +124,35 @@ bool playTrajectoryCallback(std_srvs::Empty::Request& req, std_srvs::Empty::Resp
 		return false;
 	}
 	
-	if(trajectory.poses.empty())
+	if(recording)
 	{
-		ROS_WARN("Cannot play empty trajectory.");
+		ROS_WARN("Cannot play trajectory while recording.");
 		return false;
 	}
 	
-	recording = false;
+	if(plannedTrajectory.poses.empty())
+	{
+		ROS_WARN("Cannot play an empty trajectory.");
+		return false;
+	}
+	
 	playing = true;
 	
-	std::string frame_id = trajectory.poses[0].header.frame_id;
+	realTrajectory.poses.clear();
+	
+	std::string frame_id = plannedTrajectory.poses[0].header.frame_id;
 	ros::Time stamp = ros::Time::now();
-	trajectory.header.frame_id = frame_id;
-	trajectory.header.stamp = stamp;
 	
-	path_msgs::FollowPathActionGoal goal;
-	goal.goal.path.paths.push_back(trajectory);
-	goal.goal.path.header.frame_id = frame_id;
-	goal.goal.path.header.stamp = stamp;
-	goal.goal.follower_options.velocity = trajectorySpeed;
-	goal.goal.follower_options.init_mode = path_msgs::FollowerOptions::INIT_MODE_CONTINUE;
-	client->sendGoal(goal.goal);
+	plannedTrajectory.header.frame_id = frame_id;
+	plannedTrajectory.header.stamp = stamp;
 	
-	path_msgs::PathSequence pathSequence;
-	pathSequence.paths.push_back(trajectory);
-	pathSequence.header.frame_id = frame_id;
-	pathSequence.header.stamp = stamp;
-	pathPublisher.publish(pathSequence);
+	path_msgs::FollowPathGoal goal;
+	goal.follower_options.init_mode = path_msgs::FollowerOptions::INIT_MODE_CONTINUE;
+	goal.follower_options.velocity = trajectorySpeed;
+	goal.path.header.frame_id = frame_id;
+	goal.path.header.stamp = stamp;
+	goal.path.paths.push_back(plannedTrajectory);
+	actionlibClient->sendGoal(goal);
 	
 	return true;
 }
@@ -118,24 +163,28 @@ int main(int argc, char** argv)
 	ros::NodeHandle nodeHandle;
 	ros::NodeHandle privateNodeHandle("~");
 	
-	privateNodeHandle.param<float>("trajectory_speed", trajectorySpeed, 5.0);
-	
-	ros::Subscriber poseSubscriber = nodeHandle.subscribe("pose_in", 1000, poseCallback);
+	ros::Subscriber plannedTrajectorySubscriber = nodeHandle.subscribe("pose_in", 1000, plannedTrajectoryCallback);
+	ros::Subscriber realTrajectorySubscriber = nodeHandle.subscribe("pose_in", 1000, realTrajectoryCallback);
 	ros::Subscriber trajectoryResultSubscriber = nodeHandle.subscribe("follow_path/result", 1000, trajectoryResultCallback);
 	
-	pathPublisher = nodeHandle.advertise<path_msgs::PathSequence>("path", 1000);
+	plannedTrajectoryPublisher = nodeHandle.advertise<path_msgs::PathSequence>("planned_trajectory", 1000);
+	realTrajectoryPublisher = nodeHandle.advertise<path_msgs::PathSequence>("real_trajectory", 1000);
 	
-	ros::ServiceServer startRecordingService = nodeHandle.advertiseService("start_recording", startRecordingCallback);
-	ros::ServiceServer stopRecordingService = nodeHandle.advertiseService("stop_recording", stopRecordingCallback);
-	ros::ServiceServer clearTrajectoryService = nodeHandle.advertiseService("clear_trajectory", clearTrajectoryCallback);
-	ros::ServiceServer playTrajectoryService = nodeHandle.advertiseService("play_trajectory", playTrajectoryCallback);
+	ros::ServiceServer startRecordingService = nodeHandle.advertiseService("start_recording", startRecordingServiceCallback);
+	ros::ServiceServer stopRecordingService = nodeHandle.advertiseService("stop_recording", stopRecordingServiceCallback);
+	ros::ServiceServer clearTrajectoryService = nodeHandle.advertiseService("clear_trajectory", clearTrajectoryServiceCallback);
+	ros::ServiceServer playTrajectoryService = nodeHandle.advertiseService("play_trajectory", playTrajectoryServiceCallback);
 	
-	client = std::unique_ptr<actionlib::SimpleActionClient<path_msgs::FollowPathAction>>(
+	privateNodeHandle.param<float>("trajectory_speed", trajectorySpeed, 5.0);
+	
+	recording = false;
+	playing = false;
+	
+	actionlibClient = std::unique_ptr<actionlib::SimpleActionClient<path_msgs::FollowPathAction>>(
 			new actionlib::SimpleActionClient<path_msgs::FollowPathAction>("follow_path", true));
-	trajectory.forward = true;
 	
 	ROS_INFO("Waiting for server...");
-	client->waitForServer();
+	actionlibClient->waitForServer();
 	ROS_INFO("Connected to server");
 	
 	ros::spin();
