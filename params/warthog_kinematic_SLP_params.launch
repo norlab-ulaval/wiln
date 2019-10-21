@@ -36,30 +36,23 @@
 	<group ns="path_follower">
 		<group ns="controller">
 			<!-- parameters, that are dependent of the controller or the robot model -->
-			<group ns="kinematic_hbz">
-				<param name="k1" value="5.0" />
-				<param name="k2" value="10.0" />
+			<group ns="kinematic_slp">
+				<param name="k1" value="0.05" />
+				<param name="k2" value="5.0" />
 
-				<param name="lambda" value="1.0" />
+				<param name="gamma" value="5.0" />
 				<param name="theta_a" value="2*0.78539816339" />
-
-				<param name="x_ICR" value="0.0"/>
-				<param name="y_ICR_l" value="0.2335" />
-				<param name="y_ICR_r" value="-0.2335" />
-				<param name="alpha_l" value="1.0" />
-				<param name="alpha_r" value="1.0" />
-
 				<param name="max_angular_velocity" value="1.0" />
 				<param name="epsilon" value="0.5" />
 				<param name="b" value="0.2" />
 
-				<param name="look_ahead_dist" value="1.5" />
+				<param name="look_ahead_dist" value="1.0" />
 				<param name="k_o" value="0.0" />
-				<param name="k_g" value="0.05" />
+				<param name="k_g" value="0.5" />
 				<param name="k_w" value="0.0" />
 				<param name="k_curv" value="0.0" />
 				<param name="obst_threshold" value="3.0" />
 			</group>
 		</group>
 	</group>
-</launch>
+ </launch>
