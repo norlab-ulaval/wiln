@@ -12,7 +12,7 @@ ros::Publisher realTrajectoryPublisher;
 float trajectorySpeed;
 bool recording;
 bool playing;
-std::unique_ptr<actionlib::SimpleActionClient<path_msgs::FollowPathAction>> actionlibClient;
+std::unique_ptr<actionlib::SimpleActionClient<path_msgs::FollowPathAction>> simpleActionClient;
 path_msgs::DirectionalPath plannedTrajectory;
 path_msgs::DirectionalPath realTrajectory;
 
@@ -147,7 +147,22 @@ bool playTrajectoryServiceCallback(std_srvs::Empty::Request& req, std_srvs::Empt
 	goal.path.header.frame_id = frame_id;
 	goal.path.header.stamp = stamp;
 	goal.path.paths.push_back(plannedTrajectory);
-	actionlibClient->sendGoal(goal);
+	simpleActionClient->sendGoal(goal);
+	
+	return true;
+}
+
+bool cancelTrajectoryServiceCallback(std_srvs::Empty::Request& req, std_srvs::Empty::Response& res)
+{
+	if(!playing)
+	{
+		ROS_WARN("Cannot cancel trajectory, no trajectory is being played.");
+		return false;
+	}
+	
+	playing = false;
+	
+	simpleActionClient->cancelAllGoals();
 	
 	return true;
 }
@@ -169,18 +184,15 @@ int main(int argc, char** argv)
 	ros::ServiceServer stopRecordingService = nodeHandle.advertiseService("stop_recording", stopRecordingServiceCallback);
 	ros::ServiceServer clearTrajectoryService = nodeHandle.advertiseService("clear_trajectory", clearTrajectoryServiceCallback);
 	ros::ServiceServer playTrajectoryService = nodeHandle.advertiseService("play_trajectory", playTrajectoryServiceCallback);
+	ros::ServiceServer cancelTrajectoryService = nodeHandle.advertiseService("cancel_trajectory", cancelTrajectoryServiceCallback);
 	
 	privateNodeHandle.param<float>("trajectory_speed", trajectorySpeed, 5.0);
 	
 	recording = false;
 	playing = false;
 	
-	actionlibClient = std::unique_ptr<actionlib::SimpleActionClient<path_msgs::FollowPathAction>>(
+	simpleActionClient = std::unique_ptr<actionlib::SimpleActionClient<path_msgs::FollowPathAction>>(
 			new actionlib::SimpleActionClient<path_msgs::FollowPathAction>("follow_path", true));
-	
-	ROS_INFO("Waiting for server...");
-	actionlibClient->waitForServer();
-	ROS_INFO("Connected to server");
 	
 	ros::spin();
 	
