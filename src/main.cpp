@@ -17,13 +17,17 @@
 
 ros::Publisher plannedTrajectoryPublisher;
 ros::Publisher realTrajectoryPublisher;
+float delayBetweenWaypoints;
 float trajectorySpeed;
 bool recording;
 bool playing;
 std::unique_ptr<actionlib::SimpleActionClient<path_msgs::FollowPathAction>> simpleActionClient;
 path_msgs::DirectionalPath plannedTrajectory;
 path_msgs::DirectionalPath realTrajectory;
+
 ros::ServiceClient client;
+
+ros::Time lastTimeWaypointWasRecorded;
 
 const std::map<int8_t, std::string> FOLLOW_PATH_RESULTS = {
 		{ 0u, "RESULT_STATUS_STOPPED_BY_SUPERVISOR" },
@@ -54,11 +58,11 @@ void publishTrajectory(const ros::Publisher& publisher, path_msgs::DirectionalPa
 
 void plannedTrajectoryCallback(const geometry_msgs::PoseStamped& poseStamped)
 {
-	if(recording)
-	{
-		plannedTrajectory.poses.push_back(poseStamped);
-		publishTrajectory(plannedTrajectoryPublisher, plannedTrajectory, poseStamped.header.frame_id, ros::Time::now());
-	}
+    if(recording)
+    {
+        plannedTrajectory.poses.push_back(poseStamped);
+        publishTrajectory(plannedTrajectoryPublisher, plannedTrajectory, poseStamped.header.frame_id, ros::Time::now());
+    }
 }
 
 void realTrajectoryCallback(const geometry_msgs::PoseStamped& poseStamped)
@@ -342,6 +346,9 @@ int main(int argc, char** argv)
     client = nodeHandle.serviceClient<map_msgs::SaveMap>("save_map");
 
 	privateNodeHandle.param<float>("trajectory_speed", trajectorySpeed, 5.0);
+	
+	privateNodeHandle.param<float>("delay_between_waypoints", delayBetweenWaypoints, 0.5);
+	privateNodeHandle.param<float>("trajectory_speed", trajectorySpeed, 1.0);
 	
 	recording = false;
 	playing = false;
