@@ -1,4 +1,5 @@
 #include <ros/ros.h>
+#include <fstream>
 #include <std_srvs/Empty.h>
 #include <geometry_msgs/PoseStamped.h>
 #include <path_msgs/DirectionalPath.h>
@@ -6,6 +7,13 @@
 #include <path_msgs/FollowPathAction.h>
 #include <path_msgs/FollowPathActionResult.h>
 #include <actionlib/client/simple_action_client.h>
+#include <tf2/LinearMath/Quaternion.h>
+#include <tf2_geometry_msgs/tf2_geometry_msgs.h>
+#include "norlab_teach_repeat/SaveTraj.h"
+#include "norlab_teach_repeat/LoadTraj.h"
+#include "norlab_teach_repeat/SaveMapTraj.h"
+#include "norlab_teach_repeat/LoadMapTraj.h"
+#include "map_msgs/SaveMap.h"
 
 ros::Publisher plannedTrajectoryPublisher;
 ros::Publisher realTrajectoryPublisher;
@@ -15,6 +23,7 @@ bool playing;
 std::unique_ptr<actionlib::SimpleActionClient<path_msgs::FollowPathAction>> simpleActionClient;
 path_msgs::DirectionalPath plannedTrajectory;
 path_msgs::DirectionalPath realTrajectory;
+ros::ServiceClient client;
 
 const std::map<int8_t, std::string> FOLLOW_PATH_RESULTS = {
 		{ 0u, "RESULT_STATUS_STOPPED_BY_SUPERVISOR" },
@@ -111,6 +120,31 @@ bool clearTrajectoryServiceCallback(std_srvs::Empty::Request& req, std_srvs::Emp
 	return true;
 }
 
+bool reverseTrajectoryServiceCallback(std_srvs::Empty::Request& req, std_srvs::Empty::Response& res)
+{
+    std::reverse(plannedTrajectory.poses.begin(), plannedTrajectory.poses.end());
+    for(int i=0; i<plannedTrajectory.poses.size()-1; i++) {
+        double angle = std::atan2(
+                plannedTrajectory.poses[i + 1].pose.position.y - plannedTrajectory.poses[i].pose.position.y,
+                plannedTrajectory.poses[i + 1].pose.position.x - plannedTrajectory.poses[i].pose.position.x);
+        tf2::Quaternion quaternion(angle, 0, 0);
+        plannedTrajectory.poses[i].pose.orientation = tf2::toMsg(quaternion);
+    }
+    // invert all orientation quaternions
+//    for(auto it = std::begin(plannedTrajectory.poses); it != std::end(plannedTrajectory.poses); ++it) {
+//        tf2::Quaternion quaternion;
+//        tf2::fromMsg(it->pose.orientation, quaternion);
+//        it->pose.orientation = tf2::toMsg(quaternion.inverse());
+//    }
+    return true;
+}
+
+bool reverseRobotDirServiceCallback(std_srvs::Empty::Request& req, std_srvs::Empty::Response& res)
+{
+    plannedTrajectory.forward = !plannedTrajectory.forward;
+    return true;
+}
+
 bool playTrajectoryServiceCallback(std_srvs::Empty::Request& req, std_srvs::Empty::Response& res)
 {
 	if(playing)
@@ -167,6 +201,119 @@ bool cancelTrajectoryServiceCallback(std_srvs::Empty::Request& req, std_srvs::Em
 	return true;
 }
 
+bool saveTrajectoryServiceFun(norlab_teach_repeat::SaveTraj::Request& req, norlab_teach_repeat::SaveTraj::Response& res)
+{
+    std::ofstream outFile(req.file_name);
+//    for (const auto &e : plannedTrajectory.poses) outFile << e << "\n";
+    for(int i=0; i<plannedTrajectory.poses.size(); i++)
+    {
+        outFile << plannedTrajectory.poses[i].pose.position.x << ","
+                << plannedTrajectory.poses[i].pose.position.y << ","
+                << plannedTrajectory.poses[i].pose.orientation.x << ","
+                << plannedTrajectory.poses[i].pose.orientation.y << ","
+                << plannedTrajectory.poses[i].pose.orientation.z << ","
+                << plannedTrajectory.poses[i].pose.orientation.w << std::endl;
+    }
+    outFile.close();
+    return true;
+}
+
+bool loadTrajectoryServiceFun(norlab_teach_repeat::LoadTraj::Request& req, norlab_teach_repeat::LoadTraj::Response& res)
+{
+    std::ifstream Trajectory(req.file_name);
+    path_msgs::DirectionalPath loadTrajectory;
+    std::string line;
+    while (std::getline(Trajectory, line))
+    {
+        geometry_msgs::PoseStamped pose;
+        int pos = line.find(",");
+        pose.pose.position.x = std::stod(line.substr(0, pos));
+        int prev_pos = pos + 1;
+        pos = line.find("," , prev_pos);
+        pose.pose.position.y = std::stod(line.substr(prev_pos, pos));
+        prev_pos = pos + 1;
+        pos = line.find("," , prev_pos);
+        pose.pose.orientation.x = std::stod(line.substr(prev_pos, pos));
+        prev_pos = pos + 1;
+        pos = line.find("," , prev_pos);
+        pose.pose.orientation.y = std::stod(line.substr(prev_pos, pos));
+        prev_pos = pos + 1;
+        pos = line.find("," , prev_pos);
+        pose.pose.orientation.z = std::stod(line.substr(prev_pos, pos));
+        prev_pos = pos + 1;
+        pos = line.find("\n" , prev_pos);
+        pose.pose.orientation.w = std::stod(line.substr(prev_pos, pos));
+        plannedTrajectory.poses.push_back(pose);
+    }
+//    plannedTrajectory.poses
+    Trajectory.close();
+    return true;
+}
+
+bool saveTrajectoryMapServiceFun(norlab_teach_repeat::SaveMapTraj::Request& req, norlab_teach_repeat::SaveMapTraj::Response& res)
+{
+    map_msgs::SaveMap srv;
+    std::string mapName = req.file_name.substr(0, req.file_name.rfind('.')) + ".vtk";
+    srv.request.filename.data = mapName;
+    client.call(srv);
+    std::rename(mapName.c_str(), req.file_name.c_str());
+    std::ofstream ltrFile(req.file_name, std::ios_base::app);
+
+//    for (const auto &e : plannedTrajectory.poses) outFile << e << "\n";
+    ltrFile << "#############################" << std::endl;
+
+    for(int i=0; i<plannedTrajectory.poses.size(); i++)
+    {
+        ltrFile << plannedTrajectory.poses[i].pose.position.x << ","
+                << plannedTrajectory.poses[i].pose.position.y << ","
+                << plannedTrajectory.poses[i].pose.orientation.x << ","
+                << plannedTrajectory.poses[i].pose.orientation.y << ","
+                << plannedTrajectory.poses[i].pose.orientation.z << ","
+                << plannedTrajectory.poses[i].pose.orientation.w << std::endl;
+    }
+    ltrFile.close();
+    return true;
+}
+
+bool loadTrajectoryMapServiceFun(norlab_teach_repeat::LoadMapTraj::Request& req, norlab_teach_repeat::LoadMapTraj::Response& res)
+{
+    std::ifstream ltrFile(req.file_name);
+    path_msgs::DirectionalPath loadTrajectory;
+    std::string line;
+    bool trajSwitch;
+    while (std::getline(ltrFile, line))
+    {
+        if (trajSwitch)
+        {
+            geometry_msgs::PoseStamped pose;
+            int pos = line.find(",");
+            pose.pose.position.x = std::stod(line.substr(0, pos));
+            int prev_pos = pos + 1;
+            pos = line.find("," , prev_pos);
+            pose.pose.position.y = std::stod(line.substr(prev_pos, pos));
+            prev_pos = pos + 1;
+            pos = line.find("," , prev_pos);
+            pose.pose.orientation.x = std::stod(line.substr(prev_pos, pos));
+            prev_pos = pos + 1;
+            pos = line.find("," , prev_pos);
+            pose.pose.orientation.y = std::stod(line.substr(prev_pos, pos));
+            prev_pos = pos + 1;
+            pos = line.find("," , prev_pos);
+            pose.pose.orientation.z = std::stod(line.substr(prev_pos, pos));
+            prev_pos = pos + 1;
+            pos = line.find("\n" , prev_pos);
+            pose.pose.orientation.w = std::stod(line.substr(prev_pos, pos));
+            plannedTrajectory.poses.push_back(pose);
+        }
+        if (line.find("#############################") != std::string::npos) {
+            trajSwitch = true;
+        }
+    }
+//    plannedTrajectory.poses
+    ltrFile.close();
+    return true;
+}
+
 int main(int argc, char** argv)
 {
 	ros::init(argc, argv, "norlab_teach_repeat_node");
@@ -185,7 +332,15 @@ int main(int argc, char** argv)
 	ros::ServiceServer clearTrajectoryService = nodeHandle.advertiseService("clear_trajectory", clearTrajectoryServiceCallback);
 	ros::ServiceServer playTrajectoryService = nodeHandle.advertiseService("play_trajectory", playTrajectoryServiceCallback);
 	ros::ServiceServer cancelTrajectoryService = nodeHandle.advertiseService("cancel_trajectory", cancelTrajectoryServiceCallback);
-	
+    ros::ServiceServer reverseTrajectoryService = nodeHandle.advertiseService("reverse_trajectory", reverseTrajectoryServiceCallback);
+    ros::ServiceServer reverseRobotDirService = nodeHandle.advertiseService("reverse_dir", reverseRobotDirServiceCallback);
+    ros::ServiceServer saveTrajectoryService = nodeHandle.advertiseService("save_trajectory", saveTrajectoryServiceFun);
+    ros::ServiceServer loadTrajectoryService = nodeHandle.advertiseService("load_trajectory", loadTrajectoryServiceFun);
+    ros::ServiceServer saveTrajectoryMapService = nodeHandle.advertiseService("save_map_trajectory", saveTrajectoryMapServiceFun);
+    ros::ServiceServer loadTrajectoryMapService = nodeHandle.advertiseService("load_map_trajectory", loadTrajectoryMapServiceFun);
+
+    client = nodeHandle.serviceClient<map_msgs::SaveMap>("save_map");
+
 	privateNodeHandle.param<float>("trajectory_speed", trajectorySpeed, 5.0);
 	
 	recording = false;

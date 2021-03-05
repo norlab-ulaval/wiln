@@ -8,7 +8,7 @@ project(norlab_teach_repeat)
 ## if COMPONENTS list like find_package(catkin REQUIRED COMPONENTS xyz)
 ## is used, also find other catkin packages
 find_package(catkin REQUIRED COMPONENTS
-  roscpp geometry_msgs path_msgs std_srvs actionlib
+  roscpp geometry_msgs path_msgs std_srvs actionlib tf2 tf2_geometry_msgs map_msgs
 )
 
 ## System dependencies are found with CMake's conventions
@@ -52,11 +52,13 @@ find_package(catkin REQUIRED COMPONENTS
 # )
 
 ## Generate services in the 'srv' folder
-# add_service_files(
-#   FILES
-#   Service1.srv
-#   Service2.srv
-# )
+ add_service_files(
+   FILES
+   SaveTraj.srv
+   LoadTraj.srv
+   SaveMapTraj.srv
+   LoadMapTraj.srv
+ )
 
 ## Generate actions in the 'action' folder
 # add_action_files(
@@ -66,10 +68,10 @@ find_package(catkin REQUIRED COMPONENTS
 # )
 
 ## Generate added messages and services with any dependencies listed here
-# generate_messages(
-#   DEPENDENCIES
-#   std_msgs  # Or other packages containing msgs
-# )
+ generate_messages(
+   DEPENDENCIES
+   std_msgs  # Or other packages containing msgs
+ )
 
 ################################################
 ## Declare ROS dynamic reconfigure parameters ##
