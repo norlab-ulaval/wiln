@@ -25,7 +25,9 @@ std::unique_ptr<actionlib::SimpleActionClient<path_msgs::FollowPathAction>> simp
 path_msgs::DirectionalPath plannedTrajectory;
 path_msgs::DirectionalPath realTrajectory;
 
-ros::ServiceClient client;
+ros::ServiceClient client_saveMap;
+ros::ServiceClient client_enable_Mapping;
+ros::ServiceClient client_disable_Mapping;
 
 ros::Time lastTimeWaypointWasRecorded;
 
@@ -103,6 +105,10 @@ bool startRecordingServiceCallback(std_srvs::Empty::Request& req, std_srvs::Empt
 	}
 	
 	recording = true;
+
+    std_srvs::Empty srv_enableMapping = std_srvs::Empty();
+    client_enable_Mapping.call(srv_enableMapping);
+
 	return true;
 }
 
@@ -172,7 +178,10 @@ bool playTrajectoryServiceCallback(std_srvs::Empty::Request& req, std_srvs::Empt
 	playing = true;
 	
 	realTrajectory.poses.clear();
-	
+
+	std_srvs::Empty srv_disableMapping = std_srvs::Empty();
+    client_disable_Mapping.call(srv_disableMapping);
+
 	std::string frame_id = plannedTrajectory.poses[0].header.frame_id;
 	ros::Time stamp = ros::Time::now();
 	
@@ -259,7 +268,7 @@ bool saveTrajectoryMapServiceFun(norlab_teach_repeat::SaveMapTraj::Request& req,
     map_msgs::SaveMap srv;
     std::string mapName = req.file_name.substr(0, req.file_name.rfind('.')) + ".vtk";
     srv.request.filename.data = mapName;
-    client.call(srv);
+    client_saveMap.call(srv);
     std::rename(mapName.c_str(), req.file_name.c_str());
     std::ofstream ltrFile(req.file_name, std::ios_base::app);
 
@@ -343,7 +352,10 @@ int main(int argc, char** argv)
     ros::ServiceServer saveTrajectoryMapService = nodeHandle.advertiseService("save_map_trajectory", saveTrajectoryMapServiceFun);
     ros::ServiceServer loadTrajectoryMapService = nodeHandle.advertiseService("load_map_trajectory", loadTrajectoryMapServiceFun);
 
-    client = nodeHandle.serviceClient<map_msgs::SaveMap>("save_map");
+    client_saveMap = nodeHandle.serviceClient<map_msgs::SaveMap>("save_map");
+
+    client_enable_Mapping = nodeHandle.serviceClient<std_srvs::Empty>("enable_mapping");
+    client_disable_Mapping = nodeHandle.serviceClient<std_srvs::Empty>("disable_mapping");
 
 	privateNodeHandle.param<float>("trajectory_speed", trajectorySpeed, 5.0);
 	
