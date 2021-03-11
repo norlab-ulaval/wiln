@@ -30,6 +30,7 @@ ros::ServiceClient client_enable_Mapping;
 ros::ServiceClient client_disable_Mapping;
 
 ros::Time lastTimeWaypointWasRecorded;
+ros::ServiceClient client;
 
 const std::map<int8_t, std::string> FOLLOW_PATH_RESULTS = {
 		{ 0u, "RESULT_STATUS_STOPPED_BY_SUPERVISOR" },
