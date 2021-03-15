@@ -1,9 +1,9 @@
-<launch>
+<launch>i
 	<group ns="path_follower">
 		<param name="min_velocity" value="0.2" />
-		<param name="max_velocity" value="1.3" />
-		<param name="waypoint_tolerance" value="0.8" />
-		<param name="goal_tolerance" value="2.0" />
+		<param name="max_velocity" value="2.0" />
+		<param name="waypoint_tolerance" value="0.2" />
+		<param name="goal_tolerance" value="0.15" />
 
 		<group ns="collision_avoider">
 			<group ns="collision_box">
@@ -37,13 +37,14 @@
 		<group ns="controller">
 			<!-- parameters, that are dependent of the controller or the robot model -->
 			<group ns="differential_orthexp">
-				<param name="k" value="0.5" />
+				<param name="k" value="0.25" />
 				<param name="look_ahead_dist" value="1.0" />
-				<param name="k_o" value="0.0" />
-				<param name="k_g" value="0.5" />
-				<param name="k_w" value="0.0" />
-				<param name="k_curv" value="0.5" />
+				<param name="k_o" value="0.4" />
+				<param name="k_g" value="0.3" />
+				<param name="k_w" value="0.5" />
+				<param name="k_curv" value="0.05" />
 				<param name="obst_threshold" value="3.0" />
+				<param name="max_angular_velocity" value="1.0" />
 			</group>
 		</group>
 	</group>
