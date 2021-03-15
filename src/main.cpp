@@ -26,6 +26,7 @@ path_msgs::DirectionalPath plannedTrajectory;
 path_msgs::DirectionalPath realTrajectory;
 
 ros::ServiceClient client_saveMap;
+ros::ServiceClient client_loadMap;
 ros::ServiceClient client_enable_Mapping;
 ros::ServiceClient client_disable_Mapping;
 
@@ -290,6 +291,7 @@ bool saveTrajectoryMapServiceFun(norlab_teach_repeat::SaveMapTraj::Request& req,
 
 bool loadTrajectoryMapServiceFun(norlab_teach_repeat::LoadMapTraj::Request& req, norlab_teach_repeat::LoadMapTraj::Response& res)
 {
+    std::ofstream mapFile("/tmp/map.vtk");
     std::ifstream ltrFile(req.file_name);
     path_msgs::DirectionalPath loadTrajectory;
     std::string line;
@@ -318,12 +320,24 @@ bool loadTrajectoryMapServiceFun(norlab_teach_repeat::LoadMapTraj::Request& req,
             pose.pose.orientation.w = std::stod(line.substr(prev_pos, pos));
             plannedTrajectory.poses.push_back(pose);
         }
-        if (line.find("#############################") != std::string::npos) {
+	else if (line.find("#############################") != std::string::npos) {
             trajSwitch = true;
         }
+	else
+	{
+	    mapFile << line << std::endl;
+	}
     }
 //    plannedTrajectory.poses
     ltrFile.close();
+    mapFile.close();
+   
+    map_msgs::SaveMap srv;
+    srv.request.filename.data = "/tmp/map.vtk";
+    client_loadMap.call(srv);
+
+    std::remove("/tmp/map.vtk");
+
     return true;
 }
 
@@ -353,6 +367,7 @@ int main(int argc, char** argv)
     ros::ServiceServer loadTrajectoryMapService = nodeHandle.advertiseService("load_map_trajectory", loadTrajectoryMapServiceFun);
 
     client_saveMap = nodeHandle.serviceClient<map_msgs::SaveMap>("save_map");
+    client_loadMap = nodeHandle.serviceClient<map_msgs::SaveMap>("load_map");
 
     client_enable_Mapping = nodeHandle.serviceClient<std_srvs::Empty>("enable_mapping");
     client_disable_Mapping = nodeHandle.serviceClient<std_srvs::Empty>("disable_mapping");
