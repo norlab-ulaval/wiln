@@ -270,7 +270,7 @@ bool saveTrajectoryMapServiceFun(norlab_teach_repeat::SaveMapTraj::Request& req,
     srv.request.filename.data = mapName;
     client_saveMap.call(srv);
     std::rename(mapName.c_str(), req.file_name.c_str());
-    std::ofstream ltrFile(req.file_name, std::ios_base::app);
+    std::ofstream ltrFile(req.file_name, std::ios::app);
 
 //    for (const auto &e : plannedTrajectory.poses) outFile << e << "\n";
     ltrFile << "#############################" << std::endl;
