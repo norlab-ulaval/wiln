@@ -263,9 +263,7 @@ bool loadTrajectoryServiceFun(norlab_teach_repeat::LoadTraj::Request& req, norla
     Trajectory.close();
 
     // publish trajectory
-    const geometry_msgs::PoseStamped poseStamped;
-    plannedTrajectory.poses.push_back(poseStamped);
-    publishTrajectory(plannedTrajectoryPublisher, plannedTrajectory, poseStamped.header.frame_id, ros::Time::now());
+//    publishTrajectory(plannedTrajectoryPublisher, plannedTrajectory, frame_id, ros::Time::now());
 
     return true;
 }
@@ -281,6 +279,7 @@ bool saveTrajectoryMapServiceFun(norlab_teach_repeat::SaveMapTraj::Request& req,
 
 //    for (const auto &e : plannedTrajectory.poses) outFile << e << "\n";
     ltrFile << "#############################" << std::endl;
+    ltrFile << "frame_id : " << plannedTrajectory.poses[0].header.frame_id << std::endl;
 
     for(int i=0; i<plannedTrajectory.poses.size(); i++)
     {
@@ -291,6 +290,8 @@ bool saveTrajectoryMapServiceFun(norlab_teach_repeat::SaveMapTraj::Request& req,
                 << plannedTrajectory.poses[i].pose.orientation.z << ","
                 << plannedTrajectory.poses[i].pose.orientation.w << std::endl;
     }
+
+
     ltrFile.close();
     return true;
 }
@@ -301,6 +302,7 @@ bool loadTrajectoryMapServiceFun(norlab_teach_repeat::LoadMapTraj::Request& req,
     std::ifstream ltrFile(req.file_name);
     path_msgs::DirectionalPath loadTrajectory;
     std::string line;
+    std::string load_frame_id;
     bool trajSwitch;
     while (std::getline(ltrFile, line))
     {
@@ -326,7 +328,8 @@ bool loadTrajectoryMapServiceFun(norlab_teach_repeat::LoadMapTraj::Request& req,
             pose.pose.orientation.w = std::stod(line.substr(prev_pos, pos));
             plannedTrajectory.poses.push_back(pose);
         }
-	else if (line.find("#############################") != std::string::npos) {
+	else if (line.find("frame_id : ") != std::string::npos) {
+	        load_frame_id = std::stod(line.substr(1));
             trajSwitch = true;
         }
 	else
@@ -345,9 +348,7 @@ bool loadTrajectoryMapServiceFun(norlab_teach_repeat::LoadMapTraj::Request& req,
     std::remove("/tmp/map.vtk");
 
     // publish trajectory
-    const geometry_msgs::PoseStamped poseStamped;
-    plannedTrajectory.poses.push_back(poseStamped);
-    publishTrajectory(plannedTrajectoryPublisher, plannedTrajectory, poseStamped.header.frame_id, ros::Time::now());
+    publishTrajectory(plannedTrajectoryPublisher, plannedTrajectory, load_frame_id, ros::Time::now());
 
     return true;
 }
