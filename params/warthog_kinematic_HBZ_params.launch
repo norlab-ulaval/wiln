@@ -37,11 +37,11 @@
 		<group ns="controller">
 			<!-- parameters, that are dependent of the controller or the robot model -->
 			<group ns="kinematic_hbz">
-				<param name="k1" value="1.0" />
-				<param name="k2" value="1.0" />
+				<param name="k1" value="8.0" />
+				<param name="k2" value="40.0" />
 
 				<param name="lambda" value="1.0" />
-				<param name="theta_a" value="0.78539816339" />
+				<param name="theta_a" value="2 * 0.78539816339" />
 
 				<param name="x_ICR" value="-0.9421"/>
 				<param name="y_ICR_l" value="5.3565" />
@@ -55,8 +55,8 @@
 
 				<param name="look_ahead_dist" value="0.5" />
 				<param name="k_o" value="0.0" />
-				<param name="k_g" value="0.4" />
-				<param name="k_w" value="0.5" />
+				<param name="k_g" value="0.05" />
+				<param name="k_w" value="0.0" />
 				<param name="k_curv" value="0.0" />
 				<param name="obst_threshold" value="3.0" />
 			</group>
