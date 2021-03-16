@@ -219,7 +219,7 @@ bool saveTrajectoryServiceFun(norlab_teach_repeat::SaveTraj::Request& req, norla
 {
     std::ofstream outFile(req.file_name);
 
-    outFile << "frame_id : " << plannedTrajectory.poses[0].header.frame_id << std::endl;
+    outFile << "frame_id : " << plannedTrajectory.header.frame_id << std::endl;
 
     for(int i=0; i<plannedTrajectory.poses.size(); i++)
     {
@@ -271,10 +271,15 @@ bool loadTrajectoryServiceFun(norlab_teach_repeat::LoadTraj::Request& req, norla
             load_frame_id = line.substr(frame_start, frame_end);
             trajSwitch = true;
         }
-        plannedTrajectory.header.frame_id = load_frame_id;
     }
 
     Trajectory.close();
+
+    plannedTrajectory.header.frame_id = load_frame_id;
+    for (int i = 0; i < plannedTrajectory.poses.size(); i++)
+    {
+        plannedTrajectory.poses[i].header.frame_id = load_frame_id;
+    }
 
     // publish trajectory
     publishTrajectory(plannedTrajectoryPublisher, plannedTrajectory, load_frame_id, ros::Time::now());
@@ -364,6 +369,10 @@ bool loadTrajectoryMapServiceFun(norlab_teach_repeat::LoadMapTraj::Request& req,
     std::remove("/tmp/map.vtk");
 
     plannedTrajectory.header.frame_id = load_frame_id;
+    for (int i = 0; i < plannedTrajectory.poses.size(); i++)
+    {
+        plannedTrajectory.poses[i].header.frame_id = load_frame_id;
+    }
 
     // publish trajectory
     publishTrajectory(plannedTrajectoryPublisher, plannedTrajectory, load_frame_id, ros::Time::now());
