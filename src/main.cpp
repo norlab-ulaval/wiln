@@ -131,7 +131,7 @@ bool clearTrajectoryServiceCallback(std_srvs::Empty::Request& req, std_srvs::Emp
 	return true;
 }
 
-bool reverseTrajectoryServiceCallback(std_srvs::Empty::Request& req, std_srvs::Empty::Response& res)
+bool reverseTrajectory()
 {
     std::reverse(plannedTrajectory.poses.begin(), plannedTrajectory.poses.end());
     for(int i=0; i<plannedTrajectory.poses.size()-1; i++) {
@@ -141,18 +141,24 @@ bool reverseTrajectoryServiceCallback(std_srvs::Empty::Request& req, std_srvs::E
         tf2::Quaternion quaternion(angle, 0, 0);
         plannedTrajectory.poses[i].pose.orientation = tf2::toMsg(quaternion);
     }
-    // invert all orientation quaternions
-//    for(auto it = std::begin(plannedTrajectory.poses); it != std::end(plannedTrajectory.poses); ++it) {
-//        tf2::Quaternion quaternion;
-//        tf2::fromMsg(it->pose.orientation, quaternion);
-//        it->pose.orientation = tf2::toMsg(quaternion.inverse());
-//    }
+    return true;
+}
+
+bool reverseRobotDirection()
+{
+    plannedTrajectory.forward = !plannedTrajectory.forward;
+    return true;
+}
+
+bool reverseTrajectoryServiceCallback(std_srvs::Empty::Request& req, std_srvs::Empty::Response& res)
+{
+    reverseTrajectory();
     return true;
 }
 
 bool reverseRobotDirServiceCallback(std_srvs::Empty::Request& req, std_srvs::Empty::Response& res)
 {
-    plannedTrajectory.forward = !plannedTrajectory.forward;
+    reverseRobotDirection();
     return true;
 }
 
@@ -198,6 +204,53 @@ bool playTrajectoryServiceCallback(std_srvs::Empty::Request& req, std_srvs::Empt
 	simpleActionClient->sendGoal(goal);
 	
 	return true;
+}
+
+bool playReverseTrajectoryServiceCallback(std_srvs::Empty::Request& req, std_srvs::Empty::Response& res)
+{
+    if(playing)
+    {
+        ROS_WARN("Trajectory is already being played.");
+        return false;
+    }
+
+    if(recording)
+    {
+        ROS_WARN("Cannot play trajectory while recording.");
+        return false;
+    }
+
+    if(plannedTrajectory.poses.empty())
+    {
+        ROS_WARN("Cannot play an empty trajectory.");
+        return false;
+    }
+
+    reverseTrajectory();
+    reverseRobotDirection();
+
+    playing = true;
+
+    realTrajectory.poses.clear();
+
+    std_srvs::Empty srv_disableMapping = std_srvs::Empty();
+    client_disable_Mapping.call(srv_disableMapping);
+
+    std::string frame_id = plannedTrajectory.poses[0].header.frame_id;
+    ros::Time stamp = ros::Time::now();
+
+    plannedTrajectory.header.frame_id = frame_id;
+    plannedTrajectory.header.stamp = stamp;
+
+    path_msgs::FollowPathGoal goal;
+    goal.follower_options.init_mode = path_msgs::FollowerOptions::INIT_MODE_CONTINUE;
+    goal.follower_options.velocity = trajectorySpeed;
+    goal.path.header.frame_id = frame_id;
+    goal.path.header.stamp = stamp;
+    goal.path.paths.push_back(plannedTrajectory);
+    simpleActionClient->sendGoal(goal);
+
+    return true;
 }
 
 bool cancelTrajectoryServiceCallback(std_srvs::Empty::Request& req, std_srvs::Empty::Response& res)
@@ -400,6 +453,7 @@ int main(int argc, char** argv)
 	ros::ServiceServer cancelTrajectoryService = nodeHandle.advertiseService("cancel_trajectory", cancelTrajectoryServiceCallback);
     ros::ServiceServer reverseTrajectoryService = nodeHandle.advertiseService("reverse_trajectory", reverseTrajectoryServiceCallback);
     ros::ServiceServer reverseRobotDirService = nodeHandle.advertiseService("reverse_dir", reverseRobotDirServiceCallback);
+    ros::ServiceServer playReverseTrajectoryService = nodeHandle.advertiseService("play_reverse_trajectory", playReverseTrajectoryServiceCallback);
     ros::ServiceServer saveTrajectoryService = nodeHandle.advertiseService("save_trajectory", saveTrajectoryServiceFun);
     ros::ServiceServer loadTrajectoryService = nodeHandle.advertiseService("load_trajectory", loadTrajectoryServiceFun);
     ros::ServiceServer saveTrajectoryMapService = nodeHandle.advertiseService("save_map_trajectory", saveTrajectoryMapServiceFun);
