@@ -218,7 +218,9 @@ bool cancelTrajectoryServiceCallback(std_srvs::Empty::Request& req, std_srvs::Em
 bool saveTrajectoryServiceFun(norlab_teach_repeat::SaveTraj::Request& req, norlab_teach_repeat::SaveTraj::Response& res)
 {
     std::ofstream outFile(req.file_name);
-//    for (const auto &e : plannedTrajectory.poses) outFile << e << "\n";
+
+    outFile << "frame_id : " << plannedTrajectory.poses[0].header.frame_id << std::endl;
+
     for(int i=0; i<plannedTrajectory.poses.size(); i++)
     {
         outFile << plannedTrajectory.poses[i].pose.position.x << ","
@@ -236,34 +238,46 @@ bool loadTrajectoryServiceFun(norlab_teach_repeat::LoadTraj::Request& req, norla
 {
     std::ifstream Trajectory(req.file_name);
     path_msgs::DirectionalPath loadTrajectory;
+    bool trajSwitch;
+    std::string load_frame_id;
     std::string line;
     while (std::getline(Trajectory, line))
     {
-        geometry_msgs::PoseStamped pose;
-        int pos = line.find(",");
-        pose.pose.position.x = std::stod(line.substr(0, pos));
-        int prev_pos = pos + 1;
-        pos = line.find("," , prev_pos);
-        pose.pose.position.y = std::stod(line.substr(prev_pos, pos));
-        prev_pos = pos + 1;
-        pos = line.find("," , prev_pos);
-        pose.pose.orientation.x = std::stod(line.substr(prev_pos, pos));
-        prev_pos = pos + 1;
-        pos = line.find("," , prev_pos);
-        pose.pose.orientation.y = std::stod(line.substr(prev_pos, pos));
-        prev_pos = pos + 1;
-        pos = line.find("," , prev_pos);
-        pose.pose.orientation.z = std::stod(line.substr(prev_pos, pos));
-        prev_pos = pos + 1;
-        pos = line.find("\n" , prev_pos);
-        pose.pose.orientation.w = std::stod(line.substr(prev_pos, pos));
-        plannedTrajectory.poses.push_back(pose);
+        if (trajSwitch)
+        {
+            geometry_msgs::PoseStamped pose;
+            int pos = line.find(",");
+            pose.pose.position.x = std::stod(line.substr(0, pos));
+            int prev_pos = pos + 1;
+            pos = line.find("," , prev_pos);
+            pose.pose.position.y = std::stod(line.substr(prev_pos, pos));
+            prev_pos = pos + 1;
+            pos = line.find("," , prev_pos);
+            pose.pose.orientation.x = std::stod(line.substr(prev_pos, pos));
+            prev_pos = pos + 1;
+            pos = line.find("," , prev_pos);
+            pose.pose.orientation.y = std::stod(line.substr(prev_pos, pos));
+            prev_pos = pos + 1;
+            pos = line.find("," , prev_pos);
+            pose.pose.orientation.z = std::stod(line.substr(prev_pos, pos));
+            prev_pos = pos + 1;
+            pos = line.find("\n" , prev_pos);
+            pose.pose.orientation.w = std::stod(line.substr(prev_pos, pos));
+            plannedTrajectory.poses.push_back(pose);
+        }
+        else if (line.find("frame_id : ") != std::string::npos) {
+            int frame_start = 11; // length of string : "frame_id : "
+            int frame_end = line.find("/n");
+            load_frame_id = line.substr(frame_start, frame_end);
+            trajSwitch = true;
+        }
+        plannedTrajectory.header.frame_id = load_frame_id;
     }
-//    plannedTrajectory.poses
+
     Trajectory.close();
 
     // publish trajectory
-//    publishTrajectory(plannedTrajectoryPublisher, plannedTrajectory, frame_id, ros::Time::now());
+    publishTrajectory(plannedTrajectoryPublisher, plannedTrajectory, load_frame_id, ros::Time::now());
 
     return true;
 }
@@ -348,6 +362,8 @@ bool loadTrajectoryMapServiceFun(norlab_teach_repeat::LoadMapTraj::Request& req,
     client_loadMap.call(srv);
 
     std::remove("/tmp/map.vtk");
+
+    plannedTrajectory.header.frame_id = load_frame_id;
 
     // publish trajectory
     publishTrajectory(plannedTrajectoryPublisher, plannedTrajectory, load_frame_id, ros::Time::now());
