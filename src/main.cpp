@@ -329,9 +329,9 @@ bool loadTrajectoryMapServiceFun(norlab_teach_repeat::LoadMapTraj::Request& req,
             plannedTrajectory.poses.push_back(pose);
         }
 	else if (line.find("frame_id : ") != std::string::npos) {
-	        int frame_start = line.find(": ");
+	        int frame_start = line.find(": ") + 1;
 	        int frame_end = line.find("/n");
-	        load_frame_id = std::stod(line.substr(frame_start, frame_end));
+	        load_frame_id = line.substr(frame_start, frame_end);
             trajSwitch = true;
         }
 	else
