@@ -261,6 +261,9 @@ bool loadTrajectoryServiceFun(norlab_teach_repeat::LoadTraj::Request& req, norla
     }
 //    plannedTrajectory.poses
     Trajectory.close();
+    recording = true;
+    // publishing trajectory
+    recording = false;
     return true;
 }
 
@@ -338,6 +341,10 @@ bool loadTrajectoryMapServiceFun(norlab_teach_repeat::LoadMapTraj::Request& req,
 
     std::remove("/tmp/map.vtk");
 
+    recording = true;
+    // publishing trajectory
+    recording = false;
+
     return true;
 }
 
@@ -351,8 +358,8 @@ int main(int argc, char** argv)
 	ros::Subscriber realTrajectorySubscriber = nodeHandle.subscribe("pose_in", 1000, realTrajectoryCallback);
 	ros::Subscriber trajectoryResultSubscriber = nodeHandle.subscribe("follow_path/result", 1000, trajectoryResultCallback);
 	
-	plannedTrajectoryPublisher = nodeHandle.advertise<path_msgs::PathSequence>("planned_trajectory", 1000);
-	realTrajectoryPublisher = nodeHandle.advertise<path_msgs::PathSequence>("real_trajectory", 1000);
+	plannedTrajectoryPublisher = nodeHandle.advertise<path_msgs::PathSequence>("planned_trajectory", 1000, true);
+	realTrajectoryPublisher = nodeHandle.advertise<path_msgs::PathSequence>("real_trajectory", 1000, true);
 	
 	ros::ServiceServer startRecordingService = nodeHandle.advertiseService("start_recording", startRecordingServiceCallback);
 	ros::ServiceServer stopRecordingService = nodeHandle.advertiseService("stop_recording", stopRecordingServiceCallback);
