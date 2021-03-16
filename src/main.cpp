@@ -261,9 +261,12 @@ bool loadTrajectoryServiceFun(norlab_teach_repeat::LoadTraj::Request& req, norla
     }
 //    plannedTrajectory.poses
     Trajectory.close();
-    recording = true;
-    // publishing trajectory
-    recording = false;
+
+    // publish trajectory
+    const geometry_msgs::PoseStamped poseStamped;
+    plannedTrajectory.poses.push_back(poseStamped);
+    publishTrajectory(plannedTrajectoryPublisher, plannedTrajectory, poseStamped.header.frame_id, ros::Time::now());
+
     return true;
 }
 
@@ -341,9 +344,10 @@ bool loadTrajectoryMapServiceFun(norlab_teach_repeat::LoadMapTraj::Request& req,
 
     std::remove("/tmp/map.vtk");
 
-    recording = true;
-    // publishing trajectory
-    recording = false;
+    // publish trajectory
+    const geometry_msgs::PoseStamped poseStamped;
+    plannedTrajectory.poses.push_back(poseStamped);
+    publishTrajectory(plannedTrajectoryPublisher, plannedTrajectory, poseStamped.header.frame_id, ros::Time::now());
 
     return true;
 }
