@@ -1,5 +1,6 @@
 #include <ros/ros.h>
 #include <fstream>
+#include <mutex>
 #include <std_srvs/Empty.h>
 #include <geometry_msgs/PoseStamped.h>
 #include <path_msgs/DirectionalPath.h>
@@ -14,6 +15,7 @@
 #include "norlab_teach_repeat/SaveMapTraj.h"
 #include "norlab_teach_repeat/LoadMapTraj.h"
 #include "map_msgs/SaveMap.h"
+#include "nav_msgs/Odometry.h"
 
 ros::Publisher plannedTrajectoryPublisher;
 ros::Publisher realTrajectoryPublisher;
@@ -24,6 +26,9 @@ bool playing;
 std::unique_ptr<actionlib::SimpleActionClient<path_msgs::FollowPathAction>> simpleActionClient;
 path_msgs::DirectionalPath plannedTrajectory;
 path_msgs::DirectionalPath realTrajectory;
+
+geometry_msgs::Pose robotPose;
+std::mutex robotPoseLock;
 
 ros::ServiceClient client_saveMap;
 ros::ServiceClient client_loadMap;
@@ -44,6 +49,13 @@ const std::map<int8_t, std::string> FOLLOW_PATH_RESULTS = {
 		{ 8u, "RESULT_STATUS_PATH_LOST" },
 		{ 9u, "RESULT_STATUS_TIMEOUT" },
 };
+
+void icpOdomCallback(const nav_msgs::Odometry& odometry)
+{
+    robotPoseLock.lock();
+    robotPose = odometry.pose.pose;
+    robotPoseLock.unlock();
+}
 
 void publishTrajectory(const ros::Publisher& publisher, path_msgs::DirectionalPath& trajectory, const std::string& frame_id, const ros::Time& stamp)
 {
@@ -131,7 +143,7 @@ bool clearTrajectoryServiceCallback(std_srvs::Empty::Request& req, std_srvs::Emp
 	return true;
 }
 
-bool reverseTrajectory()
+void reverseTrajectory()
 {
     std::reverse(plannedTrajectory.poses.begin(), plannedTrajectory.poses.end());
     for(int i=0; i<plannedTrajectory.poses.size()-1; i++) {
@@ -141,13 +153,11 @@ bool reverseTrajectory()
         tf2::Quaternion quaternion(angle, 0, 0);
         plannedTrajectory.poses[i].pose.orientation = tf2::toMsg(quaternion);
     }
-    return true;
 }
 
-bool reverseRobotDirection()
+void reverseRobotDirection()
 {
     plannedTrajectory.forward = !plannedTrajectory.forward;
-    return true;
 }
 
 bool reverseTrajectoryServiceCallback(std_srvs::Empty::Request& req, std_srvs::Empty::Response& res)
@@ -228,6 +238,84 @@ bool playReverseTrajectoryServiceCallback(std_srvs::Empty::Request& req, std_srv
 
     reverseTrajectory();
     reverseRobotDirection();
+
+    playing = true;
+
+    realTrajectory.poses.clear();
+
+    std_srvs::Empty srv_disableMapping = std_srvs::Empty();
+    client_disable_Mapping.call(srv_disableMapping);
+
+    std::string frame_id = plannedTrajectory.poses[0].header.frame_id;
+    ros::Time stamp = ros::Time::now();
+
+    plannedTrajectory.header.frame_id = frame_id;
+    plannedTrajectory.header.stamp = stamp;
+
+    path_msgs::FollowPathGoal goal;
+    goal.follower_options.init_mode = path_msgs::FollowerOptions::INIT_MODE_CONTINUE;
+    goal.follower_options.velocity = trajectorySpeed;
+    goal.path.header.frame_id = frame_id;
+    goal.path.header.stamp = stamp;
+    goal.path.paths.push_back(plannedTrajectory);
+    simpleActionClient->sendGoal(goal);
+
+    return true;
+}
+
+bool playAutoTrajectoryServiceCallback(std_srvs::Empty::Request& req, std_srvs::Empty::Response& res)
+{
+    double robotPoseToTrajStartDist;
+    double robotPoseToTrajEndDist;
+    double robotPoseToTrajStartAng;
+    double robotPoseToTrajEndAng;
+    int lastTrajPose;
+    if(playing)
+    {
+        ROS_WARN("Trajectory is already being played.");
+        return false;
+    }
+
+    if(recording)
+    {
+        ROS_WARN("Cannot play trajectory while recording.");
+        return false;
+    }
+
+    if(plannedTrajectory.poses.empty())
+    {
+        ROS_WARN("Cannot play an empty trajectory.");
+        return false;
+    }
+    
+    robotPoseLock.lock();
+    lastTrajPose = plannedTrajectory.poses.size() - 1;
+    // reverse traj if robot is closer to last traj pose
+    robotPoseToTrajStartDist = pow(pow(robotPose.position.x - plannedTrajectory.poses[0].pose.position.x, 2) +
+                                   pow(robotPose.position.y - plannedTrajectory.poses[0].pose.position.y, 2) +
+                                   pow(robotPose.position.z - plannedTrajectory.poses[0].pose.position.z, 2), 0.5);
+    robotPoseToTrajEndDist = pow(pow(robotPose.position.x - plannedTrajectory.poses[lastTrajPose].pose.position.x, 2) +
+                                 pow(robotPose.position.y - plannedTrajectory.poses[lastTrajPose].pose.position.y, 2) +
+                                 pow(robotPose.position.z - plannedTrajectory.poses[lastTrajPose].pose.position.z, 2), 0.5);
+    if(robotPoseToTrajEndDist < robotPoseToTrajStartDist)
+    {
+        reverseTrajectory();
+    }
+    // reverse dir if angle to first pose is shorter when going backwards
+    // angle distance is computed at 1 - <q1, q2>^2
+    robotPoseToTrajStartAng = 1 - pow(robotPose.orientation.x * plannedTrajectory.poses[0].pose.orientation.x +
+            robotPose.orientation.y * plannedTrajectory.poses[0].pose.orientation.y +
+            robotPose.orientation.z * plannedTrajectory.poses[0].pose.orientation.z +
+            robotPose.orientation.w * plannedTrajectory.poses[0].pose.orientation.w, 2);
+    robotPoseToTrajEndAng = 1 - pow(robotPose.orientation.x * plannedTrajectory.poses[lastTrajPose].pose.orientation.x +
+                                      robotPose.orientation.y * plannedTrajectory.poses[lastTrajPose].pose.orientation.y +
+                                      robotPose.orientation.z * plannedTrajectory.poses[lastTrajPose].pose.orientation.z +
+                                      robotPose.orientation.w * plannedTrajectory.poses[lastTrajPose].pose.orientation.w, 2);
+    if(robotPoseToTrajEndAng < robotPoseToTrajStartAng)
+    {
+        reverseRobotDirection();
+    }
+    robotPoseLock.unlock();
 
     playing = true;
 
@@ -443,6 +531,7 @@ int main(int argc, char** argv)
 	ros::Subscriber plannedTrajectorySubscriber = nodeHandle.subscribe("pose_in", 1000, plannedTrajectoryCallback);
 	ros::Subscriber realTrajectorySubscriber = nodeHandle.subscribe("pose_in", 1000, realTrajectoryCallback);
 	ros::Subscriber trajectoryResultSubscriber = nodeHandle.subscribe("follow_path/result", 1000, trajectoryResultCallback);
+    ros::Subscriber icpOdomSubscriber = nodeHandle.subscribe("icp_odom", 1000, icpOdomCallback);
 	
 	plannedTrajectoryPublisher = nodeHandle.advertise<path_msgs::PathSequence>("planned_trajectory", 1000, true);
 	realTrajectoryPublisher = nodeHandle.advertise<path_msgs::PathSequence>("real_trajectory", 1000, true);
@@ -455,6 +544,7 @@ int main(int argc, char** argv)
     ros::ServiceServer reverseTrajectoryService = nodeHandle.advertiseService("reverse_trajectory", reverseTrajectoryServiceCallback);
     ros::ServiceServer reverseRobotDirService = nodeHandle.advertiseService("reverse_dir", reverseRobotDirServiceCallback);
     ros::ServiceServer playReverseTrajectoryService = nodeHandle.advertiseService("play_reverse_trajectory", playReverseTrajectoryServiceCallback);
+    ros::ServiceServer playAutoTrajectoryService = nodeHandle.advertiseService("play_auto", playAutoTrajectoryServiceCallback);
     ros::ServiceServer saveTrajectoryService = nodeHandle.advertiseService("save_trajectory", saveTrajectoryServiceFun);
     ros::ServiceServer loadTrajectoryService = nodeHandle.advertiseService("load_trajectory", loadTrajectoryServiceFun);
     ros::ServiceServer saveTrajectoryMapService = nodeHandle.advertiseService("save_map_trajectory", saveTrajectoryMapServiceFun);
