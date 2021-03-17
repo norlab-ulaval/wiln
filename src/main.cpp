@@ -268,7 +268,12 @@ bool playAutoTrajectoryServiceCallback(std_srvs::Empty::Request& req, std_srvs::
     double robotPoseToTrajStartDist;
     double robotPoseToTrajEndDist;
     double robotPoseToTrajStartAng;
-    double robotPoseToTrajEndAng;
+    double siny_cosp;
+    double cosy_cosp;
+    double robotPoseYaw;
+    double trajStartYaw;
+    double angleDist;
+
     int lastTrajPose;
     if(playing)
     {
@@ -287,7 +292,7 @@ bool playAutoTrajectoryServiceCallback(std_srvs::Empty::Request& req, std_srvs::
         ROS_WARN("Cannot play an empty trajectory.");
         return false;
     }
-    
+
     robotPoseLock.lock();
     lastTrajPose = plannedTrajectory.poses.size() - 1;
     // reverse traj if robot is closer to last traj pose
@@ -301,17 +306,31 @@ bool playAutoTrajectoryServiceCallback(std_srvs::Empty::Request& req, std_srvs::
     {
         reverseTrajectory();
     }
-    // reverse dir if angle to first pose is shorter when going backwards
-    // angle distance is computed at 1 - <q1, q2>^2
-    robotPoseToTrajStartAng = 1 - pow(robotPose.orientation.x * plannedTrajectory.poses[0].pose.orientation.x +
-            robotPose.orientation.y * plannedTrajectory.poses[0].pose.orientation.y +
-            robotPose.orientation.z * plannedTrajectory.poses[0].pose.orientation.z +
-            robotPose.orientation.w * plannedTrajectory.poses[0].pose.orientation.w, 2);
-    robotPoseToTrajEndAng = 1 - pow(robotPose.orientation.x * plannedTrajectory.poses[lastTrajPose].pose.orientation.x +
-                                      robotPose.orientation.y * plannedTrajectory.poses[lastTrajPose].pose.orientation.y +
-                                      robotPose.orientation.z * plannedTrajectory.poses[lastTrajPose].pose.orientation.z +
-                                      robotPose.orientation.w * plannedTrajectory.poses[lastTrajPose].pose.orientation.w, 2);
-    if(robotPoseToTrajEndAng < robotPoseToTrajStartAng)
+//    tf2::Quaternion robotQuat(robotPose.orientation.x, robotPose.orientation.y, robotPose.orientation.z, robotPose.orientation.w);
+//    tf2::Quaternion trajStartQuat(plannedTrajectory.poses[0].pose.orientation.x, plannedTrajectory.poses[0].pose.orientation.y,
+//                                plannedTrajectory.poses[0].pose.orientation.z, plannedTrajectory.poses[0].pose.orientation.w);
+//    // reverse dir if angle to first pose is shorter when going backward
+////    robotPoseToTrajStartAng = 1 - pow(robotPose.orientation.x * plannedTrajectory.poses[0].pose.orientation.x +
+////            robotPose.orientation.y * plannedTrajectory.poses[0].pose.orientation.y +
+////            robotPose.orientation.z * plannedTrajectory.poses[0].pose.orientation.z +
+////            robotPose.orientation.w * plannedTrajectory.poses[0].pose.orientation.w, 2);
+//    if(robotQuat.angle(trajStartQuat) > robotQuat.inverse().angle(trajStartQuat));
+//    {
+//        reverseRobotDirection();
+//    }
+    // yaw (z-axis rotation)
+    siny_cosp = 2 * (robotPose.orientation.w * robotPose.orientation.z + robotPose.orientation.x * robotPose.orientation.y);
+    cosy_cosp = 1 - 2 * (robotPose.orientation.y * robotPose.orientation.y + robotPose.orientation.z * robotPose.orientation.z);
+    robotPoseYaw = std::atan2(siny_cosp, cosy_cosp);
+    siny_cosp = 2 * (plannedTrajectory.poses[0].pose.orientation.w * plannedTrajectory.poses[0].pose.orientation.z +
+            plannedTrajectory.poses[0].pose.orientation.x * plannedTrajectory.poses[0].pose.orientation.y);
+    cosy_cosp = 1 - 2 * (plannedTrajectory.poses[0].pose.orientation.y * plannedTrajectory.poses[0].pose.orientation.y +
+            plannedTrajectory.poses[0].pose.orientation.z * plannedTrajectory.poses[0].pose.orientation.z);
+    trajStartYaw = std::atan2(siny_cosp, cosy_cosp);
+    angleDist = std::fabs(trajStartYaw - robotPoseYaw);
+    if (angleDist > M_PI)
+        angleDist = (2 * M_PI) - angleDist;
+    if(angleDist > M_PI_2)
     {
         reverseRobotDirection();
     }
