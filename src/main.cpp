@@ -375,7 +375,7 @@ bool loadTrajectoryMapServiceFun(norlab_teach_repeat::LoadMapTraj::Request& req,
     path_msgs::DirectionalPath loadTrajectory;
     std::string line;
     std::string load_frame_id;
-    bool trajSwitch;
+    bool trajSwitch = false;
     while (std::getline(ltrFile, line))
     {
         if (trajSwitch)
@@ -400,10 +400,11 @@ bool loadTrajectoryMapServiceFun(norlab_teach_repeat::LoadMapTraj::Request& req,
             pose.pose.orientation.w = std::stod(line.substr(prev_pos, pos));
             plannedTrajectory.poses.push_back(pose);
         }
-	else if (line.find("frame_id : ") != std::string::npos) {
-	        int frame_start = 11; // length of string : "frame_id : "
-	        int frame_end = line.find("/n");
-	        load_frame_id = line.substr(frame_start, frame_end);
+	else if (line.find("#############################") != std::string::npos) {
+	        std::getline(ltrFile, line);
+	       	int frame_start = 11; // length of string : "frame_id : "
+	        int frame_end = line.find("/n", frame_start);
+	        load_frame_id = line.substr(frame_start);
             trajSwitch = true;
         }
 	else
