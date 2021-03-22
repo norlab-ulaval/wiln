@@ -146,13 +146,13 @@ bool clearTrajectoryServiceCallback(std_srvs::Empty::Request& req, std_srvs::Emp
 void reverseTrajectory()
 {
     std::reverse(plannedTrajectory.poses.begin(), plannedTrajectory.poses.end());
-    for(int i=0; i<plannedTrajectory.poses.size()-1; i++) {
-        double angle = std::atan2(
-                plannedTrajectory.poses[i + 1].pose.position.y - plannedTrajectory.poses[i].pose.position.y,
-                plannedTrajectory.poses[i + 1].pose.position.x - plannedTrajectory.poses[i].pose.position.x);
-        tf2::Quaternion quaternion(angle, 0, 0);
-        plannedTrajectory.poses[i].pose.orientation = tf2::toMsg(quaternion);
-    }
+//    for(int i=0; i<plannedTrajectory.poses.size()-1; i++) {
+//        double angle = std::atan2(
+//                plannedTrajectory.poses[i + 1].pose.position.y - plannedTrajectory.poses[i].pose.position.y,
+//                plannedTrajectory.poses[i + 1].pose.position.x - plannedTrajectory.poses[i].pose.position.x);
+//        tf2::Quaternion quaternion(angle, 0, 0);
+//        plannedTrajectory.poses[i].pose.orientation = tf2::toMsg(quaternion);
+//    }
 }
 
 void reverseRobotDirection()
@@ -313,11 +313,26 @@ bool playAutoTrajectoryServiceCallback(std_srvs::Empty::Request& req, std_srvs::
             robotPose.orientation.y), robotPose.orientation.w * robotPose.orientation.w + robotPose.orientation.x *
             robotPose.orientation.x - robotPose.orientation.y * robotPose.orientation.y - robotPose.orientation.z *
             robotPose.orientation.z);
-    trajStartYaw = std::atan2(2.0f * (plannedTrajectory.poses[0].pose.orientation.w * plannedTrajectory.poses[0].pose.orientation.z +
-            plannedTrajectory.poses[0].pose.orientation.x * plannedTrajectory.poses[0].pose.orientation.y), plannedTrajectory.poses[0].pose.orientation.w *
-            plannedTrajectory.poses[0].pose.orientation.w + plannedTrajectory.poses[0].pose.orientation.x * plannedTrajectory.poses[0].pose.orientation.x -
-            plannedTrajectory.poses[0].pose.orientation.y * plannedTrajectory.poses[0].pose.orientation.y - plannedTrajectory.poses[0].pose.orientation.z *
-            plannedTrajectory.poses[0].pose.orientation.z);
+//    trajStartYaw = std::atan2(2.0f * (plannedTrajectory.poses[0].pose.orientation.w * plannedTrajectory.poses[0].pose.orientation.z +
+//            plannedTrajectory.poses[0].pose.orientation.x * plannedTrajectory.poses[0].pose.orientation.y), plannedTrajectory.poses[0].pose.orientation.w *
+//            plannedTrajectory.poses[0].pose.orientation.w + plannedTrajectory.poses[0].pose.orientation.x * plannedTrajectory.poses[0].pose.orientation.x -
+//            plannedTrajectory.poses[0].pose.orientation.y * plannedTrajectory.poses[0].pose.orientation.y - plannedTrajectory.poses[0].pose.orientation.z *
+//            plannedTrajectory.poses[0].pose.orientation.z);
+    int indexTraj = 0;
+    double distTraj = 0;
+    double dx = 0;
+    double dy = 0;
+    while(distTraj < 0.3)
+    {
+        dx = plannedTrajectory.poses[indexTraj].pose.position.x - robotPose.position.x;
+        dy = plannedTrajectory.poses[indexTraj].pose.position.y - robotPose.position.y;
+        distTraj = std::sqrt(std::pow(dx, 2) + std::pow(dy, 2));
+        indexTraj++;
+    }
+    trajStartYaw = std::atan2(dy, dx);
+    ROS_ERROR_STREAM(robotPoseYaw);
+    ROS_ERROR_STREAM(trajStartYaw);
+
     angleDist = std::fabs(trajStartYaw - robotPoseYaw);
     if (angleDist > M_PI)
         angleDist = (2 * M_PI) - angleDist;
