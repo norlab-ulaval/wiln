@@ -322,7 +322,7 @@ bool playAutoTrajectoryServiceCallback(std_srvs::Empty::Request& req, std_srvs::
     double distTraj = 0;
     double dx = 0;
     double dy = 0;
-    while(distTraj < 0.3)
+    while(distTraj < 1.0)
     {
         dx = plannedTrajectory.poses[indexTraj].pose.position.x - robotPose.position.x;
         dy = plannedTrajectory.poses[indexTraj].pose.position.y - robotPose.position.y;
