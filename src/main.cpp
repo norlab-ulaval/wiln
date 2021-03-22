@@ -338,8 +338,14 @@ bool playAutoTrajectoryServiceCallback(std_srvs::Empty::Request& req, std_srvs::
         angleDist = (2 * M_PI) - angleDist;
     if(angleDist > M_PI_2)
     {
-        reverseRobotDirection();
-        ROS_ERROR("reversed direction");
+//        reverseRobotDirection();
+        plannedTrajectory.forward = false;
+        ROS_ERROR("Going backwards");
+    }
+    else
+    {
+        plannedTrajectory.forward = true;
+        ROS_ERROR("Going forwards");
     }
     robotPoseLock.unlock();
 
