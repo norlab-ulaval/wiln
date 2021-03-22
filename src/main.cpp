@@ -305,34 +305,26 @@ bool playAutoTrajectoryServiceCallback(std_srvs::Empty::Request& req, std_srvs::
     if(robotPoseToTrajEndDist < robotPoseToTrajStartDist)
     {
         reverseTrajectory();
+        ROS_ERROR("reversed trajectory");
     }
-//    tf2::Quaternion robotQuat(robotPose.orientation.x, robotPose.orientation.y, robotPose.orientation.z, robotPose.orientation.w);
-//    tf2::Quaternion trajStartQuat(plannedTrajectory.poses[0].pose.orientation.x, plannedTrajectory.poses[0].pose.orientation.y,
-//                                plannedTrajectory.poses[0].pose.orientation.z, plannedTrajectory.poses[0].pose.orientation.w);
-//    // reverse dir if angle to first pose is shorter when going backward
-////    robotPoseToTrajStartAng = 1 - pow(robotPose.orientation.x * plannedTrajectory.poses[0].pose.orientation.x +
-////            robotPose.orientation.y * plannedTrajectory.poses[0].pose.orientation.y +
-////            robotPose.orientation.z * plannedTrajectory.poses[0].pose.orientation.z +
-////            robotPose.orientation.w * plannedTrajectory.poses[0].pose.orientation.w, 2);
-//    if(robotQuat.angle(trajStartQuat) > robotQuat.inverse().angle(trajStartQuat));
-//    {
-//        reverseRobotDirection();
-//    }
+
     // yaw (z-axis rotation)
-    siny_cosp = 2 * (robotPose.orientation.w * robotPose.orientation.z + robotPose.orientation.x * robotPose.orientation.y);
-    cosy_cosp = 1 - 2 * (robotPose.orientation.y * robotPose.orientation.y + robotPose.orientation.z * robotPose.orientation.z);
-    robotPoseYaw = std::atan2(siny_cosp, cosy_cosp);
-    siny_cosp = 2 * (plannedTrajectory.poses[0].pose.orientation.w * plannedTrajectory.poses[0].pose.orientation.z +
-            plannedTrajectory.poses[0].pose.orientation.x * plannedTrajectory.poses[0].pose.orientation.y);
-    cosy_cosp = 1 - 2 * (plannedTrajectory.poses[0].pose.orientation.y * plannedTrajectory.poses[0].pose.orientation.y +
-            plannedTrajectory.poses[0].pose.orientation.z * plannedTrajectory.poses[0].pose.orientation.z);
-    trajStartYaw = std::atan2(siny_cosp, cosy_cosp);
+    robotPoseYaw = std::atan2(2.0f * (robotPose.orientation.w * robotPose.orientation.z + robotPose.orientation.x *
+            robotPose.orientation.y), robotPose.orientation.w * robotPose.orientation.w + robotPose.orientation.x *
+            robotPose.orientation.x - robotPose.orientation.y * robotPose.orientation.y - robotPose.orientation.z *
+            robotPose.orientation.z);
+    trajStartYaw = std::atan2(2.0f * (plannedTrajectory.poses[0].pose.orientation.w * plannedTrajectory.poses[0].pose.orientation.z +
+            plannedTrajectory.poses[0].pose.orientation.x * plannedTrajectory.poses[0].pose.orientation.y), plannedTrajectory.poses[0].pose.orientation.w *
+            plannedTrajectory.poses[0].pose.orientation.w + plannedTrajectory.poses[0].pose.orientation.x * plannedTrajectory.poses[0].pose.orientation.x -
+            plannedTrajectory.poses[0].pose.orientation.y * plannedTrajectory.poses[0].pose.orientation.y - plannedTrajectory.poses[0].pose.orientation.z *
+            plannedTrajectory.poses[0].pose.orientation.z);
     angleDist = std::fabs(trajStartYaw - robotPoseYaw);
     if (angleDist > M_PI)
         angleDist = (2 * M_PI) - angleDist;
     if(angleDist > M_PI_2)
     {
         reverseRobotDirection();
+        ROS_ERROR("reversed direction");
     }
     robotPoseLock.unlock();
 
