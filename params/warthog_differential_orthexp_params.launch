@@ -1,7 +1,7 @@
 <launch>i
 	<group ns="path_follower">
 		<param name="min_velocity" value="0.5" />
-		<param name="max_velocity" value="2.0" />
+		<param name="max_velocity" value="3.33" />
 		<param name="waypoint_tolerance" value="1.0" />
 		<param name="goal_tolerance" value="0.15" />
 
