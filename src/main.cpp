@@ -75,8 +75,19 @@ void plannedTrajectoryCallback(const geometry_msgs::PoseStamped& poseStamped)
 {
     if(recording)
     {
-        plannedTrajectory.poses.push_back(poseStamped);
-        publishTrajectory(plannedTrajectoryPublisher, plannedTrajectory, poseStamped.header.frame_id, ros::Time::now());
+	double distance = 0;
+	if (!plannedTrajectory.poses.empty())
+	{
+	    geometry_msgs::PoseStamped lastPose = plannedTrajectory.poses[plannedTrajectory.poses.size()-1];
+	    distance = std::sqrt(std::pow(poseStamped.pose.position.x - lastPose.pose.position.x, 2) + 
+			std::pow(poseStamped.pose.position.y - lastPose.pose.position.y, 2) + 
+			std::pow(poseStamped.pose.position.z - lastPose.pose.position.z, 2));
+	}
+	if (distance >= 0.05 || plannedTrajectory.poses.empty())
+	{
+            plannedTrajectory.poses.push_back(poseStamped);
+            publishTrajectory(plannedTrajectoryPublisher, plannedTrajectory, poseStamped.header.frame_id, ros::Time::now());
+	}
     }
 }
 
