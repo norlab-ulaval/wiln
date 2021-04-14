@@ -1,5 +1,5 @@
 <launch>
-	<arg name="controller_type" default="kinematic_HBZ" />
+	<arg name="controller_type" default="differential_orthexp" />
 
 	<node pkg="odom_to_pose_converter" type="odom_to_pose_converter_node" name="odom_to_pose_converter_node" output="screen">
 		<remap from="odom_in" to="/icp_odom" />
@@ -7,7 +7,7 @@
 
 	<node pkg="norlab_teach_repeat" type="norlab_teach_repeat_node" name="norlab_teach_repeat_node" output="screen">
 		<remap from="pose_in" to="pose" />
-		<param name="trajectory_speed" value="3.0" />
+		<param name="trajectory_speed" value="1.5" />
 	</node>
 
 	<include file="$(find norlab_teach_repeat)/params/warthog_$(arg controller_type)_params.launch" />

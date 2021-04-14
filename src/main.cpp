@@ -10,11 +10,12 @@
 #include <actionlib/client/simple_action_client.h>
 #include <tf2/LinearMath/Quaternion.h>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.h>
+#include <norlab_icp_mapper_ros/SaveMap.h>
+#include <norlab_icp_mapper_ros/LoadMap.h>
 #include "norlab_teach_repeat/SaveTraj.h"
 #include "norlab_teach_repeat/LoadTraj.h"
 #include "norlab_teach_repeat/SaveMapTraj.h"
 #include "norlab_teach_repeat/LoadMapTraj.h"
-#include "map_msgs/SaveMap.h"
 #include "nav_msgs/Odometry.h"
 
 ros::Publisher plannedTrajectoryPublisher;
@@ -32,6 +33,7 @@ std::mutex robotPoseLock;
 
 ros::ServiceClient client_saveMap;
 ros::ServiceClient client_loadMap;
+ros::ServiceClient client_loadMapReverse;
 ros::ServiceClient client_enable_Mapping;
 ros::ServiceClient client_disable_Mapping;
 
@@ -473,9 +475,9 @@ bool loadTrajectoryServiceFun(norlab_teach_repeat::LoadTraj::Request& req, norla
 
 bool saveTrajectoryMapServiceFun(norlab_teach_repeat::SaveMapTraj::Request& req, norlab_teach_repeat::SaveMapTraj::Response& res)
 {
-    map_msgs::SaveMap srv;
+    norlab_icp_mapper_ros::SaveMap srv;
     std::string mapName = req.file_name.substr(0, req.file_name.rfind('.')) + ".vtk";
-    srv.request.filename.data = mapName;
+    srv.request.map_file_name.data = mapName;
     client_saveMap.call(srv);
     std::rename(mapName.c_str(), req.file_name.c_str());
     std::ofstream ltrFile(req.file_name, std::ios::app);
@@ -547,8 +549,14 @@ bool loadTrajectoryMapServiceFun(norlab_teach_repeat::LoadMapTraj::Request& req,
     ltrFile.close();
     mapFile.close();
    
-    map_msgs::SaveMap srv;
-    srv.request.filename.data = "/tmp/map.vtk";
+    norlab_icp_mapper_ros::LoadMap srv;
+    srv.request.map_file_name.data = "/tmp/map.vtk";
+    srv.request.pose.position.x = plannedTrajectory.poses[0].pose.position.x;
+    srv.request.pose.position.y = plannedTrajectory.poses[0].pose.position.y;
+    srv.request.pose.orientation.x = plannedTrajectory.poses[0].pose.orientation.x;
+    srv.request.pose.orientation.y = plannedTrajectory.poses[0].pose.orientation.y;
+    srv.request.pose.orientation.z = plannedTrajectory.poses[0].pose.orientation.z;
+    srv.request.pose.orientation.w = plannedTrajectory.poses[0].pose.orientation.w;
     client_loadMap.call(srv);
 
     std::remove("/tmp/map.vtk");
@@ -564,6 +572,82 @@ bool loadTrajectoryMapServiceFun(norlab_teach_repeat::LoadMapTraj::Request& req,
 
     return true;
 }
+
+
+bool loadTrajectoryMapReverseServiceFun(norlab_teach_repeat::LoadMapTraj::Request& req, norlab_teach_repeat::LoadMapTraj::Response& res)
+{
+    std::ofstream mapFile("/tmp/map.vtk");
+    std::ifstream ltrFile(req.file_name);
+    path_msgs::DirectionalPath loadTrajectory;
+    std::string line;
+    std::string load_frame_id;
+    bool trajSwitch = false;
+    while (std::getline(ltrFile, line))
+    {
+        if (trajSwitch)
+        {
+            geometry_msgs::PoseStamped pose;
+            int pos = line.find(",");
+            pose.pose.position.x = std::stod(line.substr(0, pos));
+            int prev_pos = pos + 1;
+            pos = line.find("," , prev_pos);
+            pose.pose.position.y = std::stod(line.substr(prev_pos, pos));
+            prev_pos = pos + 1;
+            pos = line.find("," , prev_pos);
+            pose.pose.orientation.x = std::stod(line.substr(prev_pos, pos));
+            prev_pos = pos + 1;
+            pos = line.find("," , prev_pos);
+            pose.pose.orientation.y = std::stod(line.substr(prev_pos, pos));
+            prev_pos = pos + 1;
+            pos = line.find("," , prev_pos);
+            pose.pose.orientation.z = std::stod(line.substr(prev_pos, pos));
+            prev_pos = pos + 1;
+            pos = line.find("\n" , prev_pos);
+            pose.pose.orientation.w = std::stod(line.substr(prev_pos, pos));
+            plannedTrajectory.poses.push_back(pose);
+        }
+	else if (line.find("#############################") != std::string::npos) {
+	        std::getline(ltrFile, line);
+	       	int frame_start = 11; // length of string : "frame_id : "
+	        int frame_end = line.find("/n", frame_start);
+	        load_frame_id = line.substr(frame_start);
+            trajSwitch = true;
+        }
+	else
+	{
+	    mapFile << line << std::endl;
+	}
+    }
+
+    ltrFile.close();
+    mapFile.close();
+   
+    norlab_icp_mapper_ros::LoadMap srv;
+    srv.request.map_file_name.data = "/tmp/map.vtk";
+    int trajLengthInd = plannedTrajectory.poses.size()-1;
+    srv.request.pose.position.x = plannedTrajectory.poses[trajLengthInd].pose.position.x;
+    srv.request.pose.position.y = plannedTrajectory.poses[trajLengthInd].pose.position.y;
+    srv.request.pose.orientation.x = plannedTrajectory.poses[trajLengthInd].pose.orientation.x;
+    srv.request.pose.orientation.y = plannedTrajectory.poses[trajLengthInd].pose.orientation.y;
+    srv.request.pose.orientation.z = plannedTrajectory.poses[trajLengthInd].pose.orientation.z;
+    srv.request.pose.orientation.w = plannedTrajectory.poses[trajLengthInd].pose.orientation.w;
+    client_loadMap.call(srv);
+
+    std::remove("/tmp/map.vtk");
+
+    plannedTrajectory.header.frame_id = load_frame_id;
+    for (int i = 0; i < plannedTrajectory.poses.size(); i++)
+    {
+        plannedTrajectory.poses[i].header.frame_id = load_frame_id;
+    }
+
+
+    // publish trajectory
+    publishTrajectory(plannedTrajectoryPublisher, plannedTrajectory, load_frame_id, ros::Time::now());
+
+    return true;
+}
+
 
 int main(int argc, char** argv)
 {
@@ -592,9 +676,10 @@ int main(int argc, char** argv)
     ros::ServiceServer loadTrajectoryService = nodeHandle.advertiseService("load_trajectory", loadTrajectoryServiceFun);
     ros::ServiceServer saveTrajectoryMapService = nodeHandle.advertiseService("save_map_trajectory", saveTrajectoryMapServiceFun);
     ros::ServiceServer loadTrajectoryMapService = nodeHandle.advertiseService("load_map_trajectory", loadTrajectoryMapServiceFun);
+    ros::ServiceServer loadTrajectoryMapReverseService = nodeHandle.advertiseService("load_map_trajectory_reverse", loadTrajectoryMapReverseServiceFun);
 
-    client_saveMap = nodeHandle.serviceClient<map_msgs::SaveMap>("save_map");
-    client_loadMap = nodeHandle.serviceClient<map_msgs::SaveMap>("load_map");
+    client_saveMap = nodeHandle.serviceClient<norlab_icp_mapper_ros::SaveMap>("save_map");
+    client_loadMap = nodeHandle.serviceClient<norlab_icp_mapper_ros::LoadMap>("load_map");
 
     client_enable_Mapping = nodeHandle.serviceClient<std_srvs::Empty>("enable_mapping");
     client_disable_Mapping = nodeHandle.serviceClient<std_srvs::Empty>("disable_mapping");

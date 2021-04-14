@@ -49,33 +49,36 @@
   <!-- Use doc_depend for packages you need only for building documentation: -->
   <!--   <doc_depend>doxygen</doc_depend> -->
   <buildtool_depend>catkin</buildtool_depend>
+
   <build_depend>roscpp</build_depend>
   <build_depend>geometry_msgs</build_depend>
   <build_depend>path_msgs</build_depend>
   <build_depend>std_srvs</build_depend>
-  <build_depend>map_msgs</build_depend>
   <build_depend>nav_msgs</build_depend>
   <build_depend>actionlib</build_depend>
   <build_depend>tf2</build_depend>
   <build_depend>tf2_geometry_msgs</build_depend>
+  <build_depend>norlab_icp_mapper_ros</build_depend>
+  
   <build_export_depend>roscpp</build_export_depend>
   <build_export_depend>geometry_msgs</build_export_depend>
   <build_export_depend>path_msgs</build_export_depend>
   <build_export_depend>std_srvs</build_export_depend>
-  <build_export_depend>map_msgs</build_export_depend>
   <build_export_depend>nav_msgs</build_export_depend>
   <build_export_depend>actionlib</build_export_depend>
-  <build_export_depend>tf2_geometry_msgs</build_export_depend>
   <build_export_depend>tf2</build_export_depend>
+  <build_export_depend>tf2_geometry_msgs</build_export_depend>
+  <build_export_depend>norlab_icp_mapper_ros</build_export_depend>
+  
   <exec_depend>roscpp</exec_depend>
   <exec_depend>geometry_msgs</exec_depend>
   <exec_depend>path_msgs</exec_depend>
   <exec_depend>std_srvs</exec_depend>
-  <exec_depend>map_msgs</exec_depend>
   <exec_depend>nav_msgs</exec_depend>
   <exec_depend>actionlib</exec_depend>
   <exec_depend>tf2</exec_depend>
   <exec_depend>tf2_geometry_msgs</exec_depend>
+  <exec_depend>norlab_icp_mapper_ros</exec_depend>
 
 
   <!-- The export tag contains other, unspecified, tags -->
