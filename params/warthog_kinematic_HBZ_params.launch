@@ -1,9 +1,9 @@
 <launch>
 	<group ns="path_follower">
 		<param name="min_velocity" value="0.5" />
-		<param name="max_velocity" value="3.33" />
+		<param name="max_velocity" value="2.5" />
 		<param name="waypoint_tolerance" value="5.0" />
-		<param name="goal_tolerance" value="0.5" />
+		<param name="goal_tolerance" value="0.25" />
 
 		<group ns="collision_avoider">
 			<group ns="collision_box">
@@ -37,23 +37,23 @@
 		<group ns="controller">
 			<!-- parameters, that are dependent of the controller or the robot model -->
 			<group ns="kinematic_hbz">
-				<param name="k1" value="10.0" />
-				<param name="k2" value="70.0" />
+				<param name="k1" value="8.0" />
+				<param name="k2" value="40.0" />
 
 				<param name="lambda" value="1.0" />
-				<param name="theta_a" value="2*0.78539816339" />
+				<param name="theta_a" value="0.78539816339" />
 
-				<param name="x_ICR" value="-2.5"/>
-				<param name="y_ICR_l" value="5" />
-				<param name="y_ICR_r" value="-5" />
-				<param name="alpha_l" value="0.99" />
-				<param name="alpha_r" value="0.99" />
+				<param name="x_ICR" value="-1.0"/>
+				<param name="y_ICR_l" value="1.5" />
+				<param name="y_ICR_r" value="-1.5" />
+				<param name="alpha_l" value="0.81" />
+				<param name="alpha_r" value="0.84" />
 
 				<param name="max_angular_velocity" value="1.0" />
-				<param name="epsilon" value="1.0" />
+				<param name="epsilon" value="0.5" />
 				<param name="b" value="0.2" />
 
-				<param name="look_ahead_dist" value="1.5" />
+				<param name="look_ahead_dist" value="3.0" />
 				<param name="k_o" value="0.0" />
 				<param name="k_g" value="0.5" />
 				<param name="k_w" value="0.0" />

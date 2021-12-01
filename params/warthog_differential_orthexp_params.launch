@@ -1,7 +1,7 @@
 <launch>i
 	<group ns="path_follower">
 		<param name="min_velocity" value="0.5" />
-		<param name="max_velocity" value="1.5" />
+		<param name="max_velocity" value="2.0" />
 		<param name="waypoint_tolerance" value="1.0" />
 		<param name="goal_tolerance" value="0.15" />
 
@@ -42,7 +42,7 @@
 				<param name="k_o" value="0.0" />
 				<param name="k_g" value="0.5" />
 				<param name="k_w" value="0.0" />
-				<param name="k_curv" value="0.0" />
+				<param name="k_curv" value="0.05" />
 				<param name="obst_threshold" value="3.0" />
 				<param name="max_angular_velocity" value="1.0" />
 			</group>

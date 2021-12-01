@@ -54,8 +54,6 @@ find_package(catkin REQUIRED COMPONENTS
 ## Generate services in the 'srv' folder
  add_service_files(
    FILES
-   SaveTraj.srv
-   LoadTraj.srv
    SaveMapTraj.srv
    LoadMapTraj.srv
  )

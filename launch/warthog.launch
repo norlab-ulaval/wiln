@@ -7,7 +7,7 @@
 
 	<node pkg="norlab_teach_repeat" type="norlab_teach_repeat_node" name="norlab_teach_repeat_node" output="screen">
 		<remap from="pose_in" to="pose" />
-		<param name="trajectory_speed" value="1.5" />
+		<param name="trajectory_speed" value="2.0" />
 	</node>
 
 	<include file="$(find norlab_teach_repeat)/params/warthog_$(arg controller_type)_params.launch" />

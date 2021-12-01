@@ -9,35 +9,33 @@
 #include <path_msgs/FollowPathActionResult.h>
 #include <actionlib/client/simple_action_client.h>
 #include <tf2/LinearMath/Quaternion.h>
-#include <tf2_geometry_msgs/tf2_geometry_msgs.h>
-#include <norlab_icp_mapper_ros/SaveMap.h>
-#include <norlab_icp_mapper_ros/LoadMap.h>
-#include "norlab_teach_repeat/SaveTraj.h"
-#include "norlab_teach_repeat/LoadTraj.h"
 #include "norlab_teach_repeat/SaveMapTraj.h"
 #include "norlab_teach_repeat/LoadMapTraj.h"
+#include <norlab_icp_mapper_ros/SaveMap.h>
+#include <norlab_icp_mapper_ros/LoadMap.h>
 #include "nav_msgs/Odometry.h"
 
-ros::Publisher plannedTrajectoryPublisher;
-ros::Publisher realTrajectoryPublisher;
 float delayBetweenWaypoints;
 float trajectorySpeed;
-bool recording;
+
 bool playing;
+bool recording;
+ros::Publisher plannedTrajectoryPublisher;
+ros::Publisher realTrajectoryPublisher;
 std::unique_ptr<actionlib::SimpleActionClient<path_msgs::FollowPathAction>> simpleActionClient;
 path_msgs::DirectionalPath plannedTrajectory;
 path_msgs::DirectionalPath realTrajectory;
-
 geometry_msgs::Pose robotPose;
 std::mutex robotPoseLock;
+ros::ServiceClient saveMapClient;
+ros::ServiceClient loadMapClient;
+ros::ServiceClient enableMappingClient;
+ros::ServiceClient disableMappingClient;
 
-ros::ServiceClient client_saveMap;
-ros::ServiceClient client_loadMap;
-ros::ServiceClient client_loadMapReverse;
-ros::ServiceClient client_enable_Mapping;
-ros::ServiceClient client_disable_Mapping;
+const int FRAME_ID_START_POSITION = 11; // length of string : "frame_id : "
+const std::string TRAJECTORY_DELIMITER = "#############################";
 
-ros::Time lastTimeWaypointWasRecorded;
+//class SaveMap;
 
 const std::map<int8_t, std::string> FOLLOW_PATH_RESULTS = {
 		{ 0u, "RESULT_STATUS_STOPPED_BY_SUPERVISOR" },
@@ -77,29 +75,42 @@ void plannedTrajectoryCallback(const geometry_msgs::PoseStamped& poseStamped)
 {
     if(recording)
     {
-	double distance = 0;
-	if (!plannedTrajectory.poses.empty())
-	{
-	    geometry_msgs::PoseStamped lastPose = plannedTrajectory.poses[plannedTrajectory.poses.size()-1];
-	    distance = std::sqrt(std::pow(poseStamped.pose.position.x - lastPose.pose.position.x, 2) + 
-			std::pow(poseStamped.pose.position.y - lastPose.pose.position.y, 2) + 
-			std::pow(poseStamped.pose.position.z - lastPose.pose.position.z, 2));
-	}
-	if (distance >= 0.05 || plannedTrajectory.poses.empty())
-	{
+	    double distance = 0;
+        if (!plannedTrajectory.poses.empty())
+        {
+            geometry_msgs::PoseStamped lastPose = plannedTrajectory.poses[plannedTrajectory.poses.size()-1];
+            distance = std::sqrt(std::pow(poseStamped.pose.position.x - lastPose.pose.position.x, 2) +
+                std::pow(poseStamped.pose.position.y - lastPose.pose.position.y, 2) +
+                std::pow(poseStamped.pose.position.z - lastPose.pose.position.z, 2));
+        }
+        if (distance >= 0.05 || plannedTrajectory.poses.empty())
+        {
             plannedTrajectory.poses.push_back(poseStamped);
             publishTrajectory(plannedTrajectoryPublisher, plannedTrajectory, poseStamped.header.frame_id, ros::Time::now());
-	}
+            plannedTrajectory.header.frame_id = poseStamped.header.frame_id;
+            plannedTrajectory.header.stamp = poseStamped.header.stamp;
+        }
     }
 }
 
 void realTrajectoryCallback(const geometry_msgs::PoseStamped& poseStamped)
 {
 	if(playing)
-	{
-		realTrajectory.poses.push_back(poseStamped);
-		publishTrajectory(realTrajectoryPublisher, realTrajectory, poseStamped.header.frame_id, ros::Time::now());
-	}
+    {
+        double distance = 0;
+        if (!realTrajectory.poses.empty())
+        {
+            geometry_msgs::PoseStamped lastPose = realTrajectory.poses[realTrajectory.poses.size()-1];
+            distance = std::sqrt(std::pow(poseStamped.pose.position.x - lastPose.pose.position.x, 2) +
+                                 std::pow(poseStamped.pose.position.y - lastPose.pose.position.y, 2) +
+                                 std::pow(poseStamped.pose.position.z - lastPose.pose.position.z, 2));
+        }
+        if (distance >= 0.05 || realTrajectory.poses.empty())
+        {
+            realTrajectory.poses.push_back(poseStamped);
+            publishTrajectory(realTrajectoryPublisher, realTrajectory, poseStamped.header.frame_id, ros::Time::now());
+        }
+    }
 }
 
 void trajectoryResultCallback(const path_msgs::FollowPathActionResult& trajectoryResult)
@@ -132,8 +143,8 @@ bool startRecordingServiceCallback(std_srvs::Empty::Request& req, std_srvs::Empt
 	
 	recording = true;
 
-    std_srvs::Empty srv_enableMapping = std_srvs::Empty();
-    client_enable_Mapping.call(srv_enableMapping);
+    std_srvs::Empty enableMappingService = std_srvs::Empty();
+    enableMappingClient.call(enableMappingService);
 
 	return true;
 }
@@ -156,138 +167,37 @@ bool clearTrajectoryServiceCallback(std_srvs::Empty::Request& req, std_srvs::Emp
 	return true;
 }
 
-void reverseTrajectory()
+double computeEuclideanDistanceBetweenPoses(const geometry_msgs::Pose& firstPose, const geometry_msgs::Pose& secondPose)
 {
-    std::reverse(plannedTrajectory.poses.begin(), plannedTrajectory.poses.end());
-//    for(int i=0; i<plannedTrajectory.poses.size()-1; i++) {
-//        double angle = std::atan2(
-//                plannedTrajectory.poses[i + 1].pose.position.y - plannedTrajectory.poses[i].pose.position.y,
-//                plannedTrajectory.poses[i + 1].pose.position.x - plannedTrajectory.poses[i].pose.position.x);
-//        tf2::Quaternion quaternion(angle, 0, 0);
-//        plannedTrajectory.poses[i].pose.orientation = tf2::toMsg(quaternion);
-//    }
+    return sqrt(pow(firstPose.position.x - secondPose.position.x, 2) +
+        pow(firstPose.position.y - secondPose.position.y, 2) +
+        pow(firstPose.position.z - secondPose.position.z, 2));
 }
 
-void reverseRobotDirection()
+double extractYawFromQuaternion(const geometry_msgs::Quaternion& quaternion)
 {
-    plannedTrajectory.forward = !plannedTrajectory.forward;
+    return std::atan2(2.0f * (quaternion.w * quaternion.z + quaternion.x *
+        quaternion.y), quaternion.w * quaternion.w + quaternion.x *
+        quaternion.x - quaternion.y * quaternion.y - quaternion.z *
+        quaternion.z);
 }
 
-bool reverseTrajectoryServiceCallback(std_srvs::Empty::Request& req, std_srvs::Empty::Response& res)
+double computeTrajectoryYaw(const path_msgs::DirectionalPath& trajectory, const geometry_msgs::Pose& pose)
 {
-    reverseTrajectory();
-    return true;
-}
-
-bool reverseRobotDirServiceCallback(std_srvs::Empty::Request& req, std_srvs::Empty::Response& res)
-{
-    reverseRobotDirection();
-    return true;
+    int indexTrajectory = 0;
+    double dx = 0;
+    double dy = 0;
+    while(std::sqrt(std::pow(dx, 2) + std::pow(dy, 2)) < 1.0 && indexTrajectory < trajectory.poses.size())
+    {
+        dx = trajectory.poses[indexTrajectory].pose.position.x - pose.position.x;
+        dy = trajectory.poses[indexTrajectory].pose.position.y - pose.position.y;
+        indexTrajectory++;
+    }
+    return std::atan2(dy, dx);
 }
 
 bool playTrajectoryServiceCallback(std_srvs::Empty::Request& req, std_srvs::Empty::Response& res)
 {
-	if(playing)
-	{
-		ROS_WARN("Trajectory is already being played.");
-		return false;
-	}
-	
-	if(recording)
-	{
-		ROS_WARN("Cannot play trajectory while recording.");
-		return false;
-	}
-	
-	if(plannedTrajectory.poses.empty())
-	{
-		ROS_WARN("Cannot play an empty trajectory.");
-		return false;
-	}
-	
-	playing = true;
-	
-	realTrajectory.poses.clear();
-
-	std_srvs::Empty srv_disableMapping = std_srvs::Empty();
-    client_disable_Mapping.call(srv_disableMapping);
-
-	std::string frame_id = plannedTrajectory.poses[0].header.frame_id;
-	ros::Time stamp = ros::Time::now();
-	
-	plannedTrajectory.header.frame_id = frame_id;
-	plannedTrajectory.header.stamp = stamp;
-	
-	path_msgs::FollowPathGoal goal;
-	goal.follower_options.init_mode = path_msgs::FollowerOptions::INIT_MODE_CONTINUE;
-	goal.follower_options.velocity = trajectorySpeed;
-	goal.path.header.frame_id = frame_id;
-	goal.path.header.stamp = stamp;
-	goal.path.paths.push_back(plannedTrajectory);
-	simpleActionClient->sendGoal(goal);
-	
-	return true;
-}
-
-bool playReverseTrajectoryServiceCallback(std_srvs::Empty::Request& req, std_srvs::Empty::Response& res)
-{
-    if(playing)
-    {
-        ROS_WARN("Trajectory is already being played.");
-        return false;
-    }
-
-    if(recording)
-    {
-        ROS_WARN("Cannot play trajectory while recording.");
-        return false;
-    }
-
-    if(plannedTrajectory.poses.empty())
-    {
-        ROS_WARN("Cannot play an empty trajectory.");
-        return false;
-    }
-
-    reverseTrajectory();
-    reverseRobotDirection();
-
-    playing = true;
-
-    realTrajectory.poses.clear();
-
-    std_srvs::Empty srv_disableMapping = std_srvs::Empty();
-    client_disable_Mapping.call(srv_disableMapping);
-
-    std::string frame_id = plannedTrajectory.poses[0].header.frame_id;
-    ros::Time stamp = ros::Time::now();
-
-    plannedTrajectory.header.frame_id = frame_id;
-    plannedTrajectory.header.stamp = stamp;
-
-    path_msgs::FollowPathGoal goal;
-    goal.follower_options.init_mode = path_msgs::FollowerOptions::INIT_MODE_CONTINUE;
-    goal.follower_options.velocity = trajectorySpeed;
-    goal.path.header.frame_id = frame_id;
-    goal.path.header.stamp = stamp;
-    goal.path.paths.push_back(plannedTrajectory);
-    simpleActionClient->sendGoal(goal);
-
-    return true;
-}
-
-bool playAutoTrajectoryServiceCallback(std_srvs::Empty::Request& req, std_srvs::Empty::Response& res)
-{
-    double robotPoseToTrajStartDist;
-    double robotPoseToTrajEndDist;
-    double robotPoseToTrajStartAng;
-    double siny_cosp;
-    double cosy_cosp;
-    double robotPoseYaw;
-    double trajStartYaw;
-    double angleDist;
-
-    int lastTrajPose;
     if(playing)
     {
         ROS_WARN("Trajectory is already being played.");
@@ -307,58 +217,34 @@ bool playAutoTrajectoryServiceCallback(std_srvs::Empty::Request& req, std_srvs::
     }
 
     robotPoseLock.lock();
-    lastTrajPose = plannedTrajectory.poses.size() - 1;
-    // reverse traj if robot is closer to last traj pose
-    robotPoseToTrajStartDist = pow(pow(robotPose.position.x - plannedTrajectory.poses[0].pose.position.x, 2) +
-                                   pow(robotPose.position.y - plannedTrajectory.poses[0].pose.position.y, 2) +
-                                   pow(robotPose.position.z - plannedTrajectory.poses[0].pose.position.z, 2), 0.5);
-    robotPoseToTrajEndDist = pow(pow(robotPose.position.x - plannedTrajectory.poses[lastTrajPose].pose.position.x, 2) +
-                                 pow(robotPose.position.y - plannedTrajectory.poses[lastTrajPose].pose.position.y, 2) +
-                                 pow(robotPose.position.z - plannedTrajectory.poses[lastTrajPose].pose.position.z, 2), 0.5);
-    if(robotPoseToTrajEndDist < robotPoseToTrajStartDist)
+
+    double robotPoseToTrajectoryStartDistance = computeEuclideanDistanceBetweenPoses(robotPose, plannedTrajectory.poses.front().pose);
+    double robotPoseToTrajectoryEndDistance = computeEuclideanDistanceBetweenPoses(robotPose, plannedTrajectory.poses.back().pose);
+    if(robotPoseToTrajectoryEndDistance < robotPoseToTrajectoryStartDistance)
     {
-        reverseTrajectory();
-        ROS_ERROR("reversed trajectory");
+        std::reverse(plannedTrajectory.poses.begin(), plannedTrajectory.poses.end());
+        ROS_INFO("Reversed trajectory");
     }
 
-    // yaw (z-axis rotation)
-    robotPoseYaw = std::atan2(2.0f * (robotPose.orientation.w * robotPose.orientation.z + robotPose.orientation.x *
-            robotPose.orientation.y), robotPose.orientation.w * robotPose.orientation.w + robotPose.orientation.x *
-            robotPose.orientation.x - robotPose.orientation.y * robotPose.orientation.y - robotPose.orientation.z *
-            robotPose.orientation.z);
-//    trajStartYaw = std::atan2(2.0f * (plannedTrajectory.poses[0].pose.orientation.w * plannedTrajectory.poses[0].pose.orientation.z +
-//            plannedTrajectory.poses[0].pose.orientation.x * plannedTrajectory.poses[0].pose.orientation.y), plannedTrajectory.poses[0].pose.orientation.w *
-//            plannedTrajectory.poses[0].pose.orientation.w + plannedTrajectory.poses[0].pose.orientation.x * plannedTrajectory.poses[0].pose.orientation.x -
-//            plannedTrajectory.poses[0].pose.orientation.y * plannedTrajectory.poses[0].pose.orientation.y - plannedTrajectory.poses[0].pose.orientation.z *
-//            plannedTrajectory.poses[0].pose.orientation.z);
-    int indexTraj = 0;
-    double distTraj = 0;
-    double dx = 0;
-    double dy = 0;
-    while(distTraj < 1.0)
-    {
-        dx = plannedTrajectory.poses[indexTraj].pose.position.x - robotPose.position.x;
-        dy = plannedTrajectory.poses[indexTraj].pose.position.y - robotPose.position.y;
-        distTraj = std::sqrt(std::pow(dx, 2) + std::pow(dy, 2));
-        indexTraj++;
-    }
-    trajStartYaw = std::atan2(dy, dx);
-    ROS_ERROR_STREAM(robotPoseYaw);
-    ROS_ERROR_STREAM(trajStartYaw);
+    double robotPoseYaw = extractYawFromQuaternion(robotPose.orientation);
 
-    angleDist = std::fabs(trajStartYaw - robotPoseYaw);
-    if (angleDist > M_PI)
-        angleDist = (2 * M_PI) - angleDist;
-    if(angleDist > M_PI_2)
+    double trajectoryStartYaw = computeTrajectoryYaw(plannedTrajectory, robotPose);
+
+    double angleDistance = std::fabs(trajectoryStartYaw - robotPoseYaw);
+    if (angleDistance > M_PI)
     {
-//        reverseRobotDirection();
+        angleDistance = (2 * M_PI) - angleDistance;
+    }
+
+    if(angleDistance > M_PI_2)
+    {
         plannedTrajectory.forward = false;
-        ROS_ERROR("Going backwards");
+        ROS_INFO("Going backwards");
     }
     else
     {
         plannedTrajectory.forward = true;
-        ROS_ERROR("Going forwards");
+        ROS_INFO("Going forwards");
     }
     robotPoseLock.unlock();
 
@@ -366,20 +252,14 @@ bool playAutoTrajectoryServiceCallback(std_srvs::Empty::Request& req, std_srvs::
 
     realTrajectory.poses.clear();
 
-    std_srvs::Empty srv_disableMapping = std_srvs::Empty();
-    client_disable_Mapping.call(srv_disableMapping);
-
-    std::string frame_id = plannedTrajectory.poses[0].header.frame_id;
-    ros::Time stamp = ros::Time::now();
-
-    plannedTrajectory.header.frame_id = frame_id;
-    plannedTrajectory.header.stamp = stamp;
+    std_srvs::Empty disableMappingService = std_srvs::Empty();
+    disableMappingClient.call(disableMappingService);
 
     path_msgs::FollowPathGoal goal;
     goal.follower_options.init_mode = path_msgs::FollowerOptions::INIT_MODE_CONTINUE;
     goal.follower_options.velocity = trajectorySpeed;
-    goal.path.header.frame_id = frame_id;
-    goal.path.header.stamp = stamp;
+    goal.path.header.frame_id = plannedTrajectory.poses[0].header.frame_id;
+    goal.path.header.stamp = ros::Time::now();;
     goal.path.paths.push_back(plannedTrajectory);
     simpleActionClient->sendGoal(goal);
 
@@ -401,253 +281,130 @@ bool cancelTrajectoryServiceCallback(std_srvs::Empty::Request& req, std_srvs::Em
 	return true;
 }
 
-bool saveTrajectoryServiceFun(norlab_teach_repeat::SaveTraj::Request& req, norlab_teach_repeat::SaveTraj::Response& res)
+bool saveLTRServiceCallback(norlab_teach_repeat::SaveMapTraj::Request& req, norlab_teach_repeat::SaveMapTraj::Response& res)
 {
-    std::ofstream outFile(req.file_name);
-
-    outFile << "frame_id : " << plannedTrajectory.header.frame_id << std::endl;
-
-    for(int i=0; i<plannedTrajectory.poses.size(); i++)
-    {
-        outFile << plannedTrajectory.poses[i].pose.position.x << ","
-                << plannedTrajectory.poses[i].pose.position.y << ","
-                << plannedTrajectory.poses[i].pose.orientation.x << ","
-                << plannedTrajectory.poses[i].pose.orientation.y << ","
-                << plannedTrajectory.poses[i].pose.orientation.z << ","
-                << plannedTrajectory.poses[i].pose.orientation.w << std::endl;
-    }
-    outFile.close();
-    return true;
-}
-
-bool loadTrajectoryServiceFun(norlab_teach_repeat::LoadTraj::Request& req, norlab_teach_repeat::LoadTraj::Response& res)
-{
-    std::ifstream Trajectory(req.file_name);
-    path_msgs::DirectionalPath loadTrajectory;
-    bool trajSwitch;
-    std::string load_frame_id;
-    std::string line;
-    while (std::getline(Trajectory, line))
-    {
-        if (trajSwitch)
-        {
-            geometry_msgs::PoseStamped pose;
-            int pos = line.find(",");
-            pose.pose.position.x = std::stod(line.substr(0, pos));
-            int prev_pos = pos + 1;
-            pos = line.find("," , prev_pos);
-            pose.pose.position.y = std::stod(line.substr(prev_pos, pos));
-            prev_pos = pos + 1;
-            pos = line.find("," , prev_pos);
-            pose.pose.orientation.x = std::stod(line.substr(prev_pos, pos));
-            prev_pos = pos + 1;
-            pos = line.find("," , prev_pos);
-            pose.pose.orientation.y = std::stod(line.substr(prev_pos, pos));
-            prev_pos = pos + 1;
-            pos = line.find("," , prev_pos);
-            pose.pose.orientation.z = std::stod(line.substr(prev_pos, pos));
-            prev_pos = pos + 1;
-            pos = line.find("\n" , prev_pos);
-            pose.pose.orientation.w = std::stod(line.substr(prev_pos, pos));
-            plannedTrajectory.poses.push_back(pose);
-        }
-        else if (line.find("frame_id : ") != std::string::npos) {
-            int frame_start = 11; // length of string : "frame_id : "
-            int frame_end = line.find("/n");
-            load_frame_id = line.substr(frame_start, frame_end);
-            trajSwitch = true;
-        }
-    }
-
-    Trajectory.close();
-
-    plannedTrajectory.header.frame_id = load_frame_id;
-    for (int i = 0; i < plannedTrajectory.poses.size(); i++)
-    {
-        plannedTrajectory.poses[i].header.frame_id = load_frame_id;
-    }
-
-    // publish trajectory
-    publishTrajectory(plannedTrajectoryPublisher, plannedTrajectory, load_frame_id, ros::Time::now());
-
-    return true;
-}
-
-bool saveTrajectoryMapServiceFun(norlab_teach_repeat::SaveMapTraj::Request& req, norlab_teach_repeat::SaveMapTraj::Response& res)
-{
-    norlab_icp_mapper_ros::SaveMap srv;
+    norlab_icp_mapper_ros::SaveMap saveMapService;
     std::string mapName = req.file_name.substr(0, req.file_name.rfind('.')) + ".vtk";
-    srv.request.map_file_name.data = mapName;
-    client_saveMap.call(srv);
+    saveMapService.request.map_file_name.data = mapName;
+    saveMapClient.call(saveMapService);
     std::rename(mapName.c_str(), req.file_name.c_str());
     std::ofstream ltrFile(req.file_name, std::ios::app);
 
-//    for (const auto &e : plannedTrajectory.poses) outFile << e << "\n";
-    ltrFile << "#############################" << std::endl;
+    ltrFile << TRAJECTORY_DELIMITER << std::endl;
     ltrFile << "frame_id : " << plannedTrajectory.poses[0].header.frame_id << std::endl;
 
     for(int i=0; i<plannedTrajectory.poses.size(); i++)
     {
         ltrFile << plannedTrajectory.poses[i].pose.position.x << ","
                 << plannedTrajectory.poses[i].pose.position.y << ","
+                << plannedTrajectory.poses[i].pose.position.z << ","
                 << plannedTrajectory.poses[i].pose.orientation.x << ","
                 << plannedTrajectory.poses[i].pose.orientation.y << ","
                 << plannedTrajectory.poses[i].pose.orientation.z << ","
                 << plannedTrajectory.poses[i].pose.orientation.w << std::endl;
     }
 
-
     ltrFile.close();
     return true;
 }
 
-bool loadTrajectoryMapServiceFun(norlab_teach_repeat::LoadMapTraj::Request& req, norlab_teach_repeat::LoadMapTraj::Response& res)
+void loadLTR(std::string fileName, bool fromEnd)
 {
+
     std::ofstream mapFile("/tmp/map.vtk");
-    std::ifstream ltrFile(req.file_name);
+    std::ifstream ltrFile(fileName);
     path_msgs::DirectionalPath loadTrajectory;
     std::string line;
-    std::string load_frame_id;
-    bool trajSwitch = false;
+    std::string pathFrameId;
+    bool parsingMap = true;
     while (std::getline(ltrFile, line))
     {
-        if (trajSwitch)
+        if(parsingMap)
+        {
+            if (line.find(TRAJECTORY_DELIMITER) != std::string::npos)
+            {
+                std::getline(ltrFile, line);
+                pathFrameId = line.substr(FRAME_ID_START_POSITION);
+                parsingMap = false;
+            }
+            else
+            {
+                mapFile << line << std::endl;
+            }
+        }
+        else
         {
             geometry_msgs::PoseStamped pose;
-            int pos = line.find(",");
-            pose.pose.position.x = std::stod(line.substr(0, pos));
-            int prev_pos = pos + 1;
-            pos = line.find("," , prev_pos);
-            pose.pose.position.y = std::stod(line.substr(prev_pos, pos));
-            prev_pos = pos + 1;
-            pos = line.find("," , prev_pos);
-            pose.pose.orientation.x = std::stod(line.substr(prev_pos, pos));
-            prev_pos = pos + 1;
-            pos = line.find("," , prev_pos);
-            pose.pose.orientation.y = std::stod(line.substr(prev_pos, pos));
-            prev_pos = pos + 1;
-            pos = line.find("," , prev_pos);
-            pose.pose.orientation.z = std::stod(line.substr(prev_pos, pos));
-            prev_pos = pos + 1;
-            pos = line.find("\n" , prev_pos);
-            pose.pose.orientation.w = std::stod(line.substr(prev_pos, pos));
+            int cursorPosition = line.find(",");
+            pose.pose.position.x = std::stod(line.substr(0, cursorPosition));
+            int previousCursorPosition = cursorPosition + 1;
+            cursorPosition = line.find("," , previousCursorPosition);
+            pose.pose.position.y = std::stod(line.substr(previousCursorPosition, cursorPosition));
+            previousCursorPosition = cursorPosition + 1;
+            cursorPosition = line.find("," , previousCursorPosition);
+            pose.pose.position.z = std::stod(line.substr(previousCursorPosition, cursorPosition));
+            previousCursorPosition = cursorPosition + 1;
+            cursorPosition = line.find("," , previousCursorPosition);
+            pose.pose.orientation.x = std::stod(line.substr(previousCursorPosition, cursorPosition));
+            previousCursorPosition = cursorPosition + 1;
+            cursorPosition = line.find("," , previousCursorPosition);
+            pose.pose.orientation.y = std::stod(line.substr(previousCursorPosition, cursorPosition));
+            previousCursorPosition = cursorPosition + 1;
+            cursorPosition = line.find("," , previousCursorPosition);
+            pose.pose.orientation.z = std::stod(line.substr(previousCursorPosition, cursorPosition));
+            previousCursorPosition = cursorPosition + 1;
+            cursorPosition = line.find("\n" , previousCursorPosition);
+            pose.pose.orientation.w = std::stod(line.substr(previousCursorPosition, cursorPosition));
             plannedTrajectory.poses.push_back(pose);
         }
-	else if (line.find("#############################") != std::string::npos) {
-	        std::getline(ltrFile, line);
-	       	int frame_start = 11; // length of string : "frame_id : "
-	        int frame_end = line.find("/n", frame_start);
-	        load_frame_id = line.substr(frame_start);
-            trajSwitch = true;
-        }
-	else
-	{
-	    mapFile << line << std::endl;
-	}
     }
-//    plannedTrajectory.poses
     ltrFile.close();
     mapFile.close();
-   
-    norlab_icp_mapper_ros::LoadMap srv;
-    srv.request.map_file_name.data = "/tmp/map.vtk";
-    srv.request.pose.position.x = plannedTrajectory.poses[0].pose.position.x;
-    srv.request.pose.position.y = plannedTrajectory.poses[0].pose.position.y;
-    srv.request.pose.orientation.x = plannedTrajectory.poses[0].pose.orientation.x;
-    srv.request.pose.orientation.y = plannedTrajectory.poses[0].pose.orientation.y;
-    srv.request.pose.orientation.z = plannedTrajectory.poses[0].pose.orientation.z;
-    srv.request.pose.orientation.w = plannedTrajectory.poses[0].pose.orientation.w;
-    client_loadMap.call(srv);
+
+    norlab_icp_mapper_ros::LoadMap loadMapService;
+    loadMapService.request.map_file_name.data = "/tmp/map.vtk";
+
+    int positionIndex;
+    if(!fromEnd)
+    {
+        positionIndex = 0;
+    }
+    else
+    {
+        positionIndex = plannedTrajectory.poses.size() - 1;
+    }
+
+    loadMapService.request.pose.position.x = plannedTrajectory.poses[positionIndex].pose.position.x;
+    loadMapService.request.pose.position.y = plannedTrajectory.poses[positionIndex].pose.position.y;
+    loadMapService.request.pose.position.z = plannedTrajectory.poses[positionIndex].pose.position.z;
+    loadMapService.request.pose.orientation.x = plannedTrajectory.poses[positionIndex].pose.orientation.x;
+    loadMapService.request.pose.orientation.y = plannedTrajectory.poses[positionIndex].pose.orientation.y;
+    loadMapService.request.pose.orientation.z = plannedTrajectory.poses[positionIndex].pose.orientation.z;
+    loadMapService.request.pose.orientation.w = plannedTrajectory.poses[positionIndex].pose.orientation.w;
+    loadMapClient.call(loadMapService);
 
     std::remove("/tmp/map.vtk");
 
-    plannedTrajectory.header.frame_id = load_frame_id;
+    plannedTrajectory.header.frame_id = pathFrameId;
     for (int i = 0; i < plannedTrajectory.poses.size(); i++)
     {
-        plannedTrajectory.poses[i].header.frame_id = load_frame_id;
+        plannedTrajectory.poses[i].header.frame_id = pathFrameId;
     }
 
-    // publish trajectory
-    publishTrajectory(plannedTrajectoryPublisher, plannedTrajectory, load_frame_id, ros::Time::now());
-
-    return true;
+    publishTrajectory(plannedTrajectoryPublisher, plannedTrajectory, pathFrameId, ros::Time::now());
 }
 
-
-bool loadTrajectoryMapReverseServiceFun(norlab_teach_repeat::LoadMapTraj::Request& req, norlab_teach_repeat::LoadMapTraj::Response& res)
+bool loadLTRServiceCallback(norlab_teach_repeat::LoadMapTraj::Request& req, norlab_teach_repeat::LoadMapTraj::Response& res)
 {
-    std::ofstream mapFile("/tmp/map.vtk");
-    std::ifstream ltrFile(req.file_name);
-    path_msgs::DirectionalPath loadTrajectory;
-    std::string line;
-    std::string load_frame_id;
-    bool trajSwitch = false;
-    while (std::getline(ltrFile, line))
-    {
-        if (trajSwitch)
-        {
-            geometry_msgs::PoseStamped pose;
-            int pos = line.find(",");
-            pose.pose.position.x = std::stod(line.substr(0, pos));
-            int prev_pos = pos + 1;
-            pos = line.find("," , prev_pos);
-            pose.pose.position.y = std::stod(line.substr(prev_pos, pos));
-            prev_pos = pos + 1;
-            pos = line.find("," , prev_pos);
-            pose.pose.orientation.x = std::stod(line.substr(prev_pos, pos));
-            prev_pos = pos + 1;
-            pos = line.find("," , prev_pos);
-            pose.pose.orientation.y = std::stod(line.substr(prev_pos, pos));
-            prev_pos = pos + 1;
-            pos = line.find("," , prev_pos);
-            pose.pose.orientation.z = std::stod(line.substr(prev_pos, pos));
-            prev_pos = pos + 1;
-            pos = line.find("\n" , prev_pos);
-            pose.pose.orientation.w = std::stod(line.substr(prev_pos, pos));
-            plannedTrajectory.poses.push_back(pose);
-        }
-	else if (line.find("#############################") != std::string::npos) {
-	        std::getline(ltrFile, line);
-	       	int frame_start = 11; // length of string : "frame_id : "
-	        int frame_end = line.find("/n", frame_start);
-	        load_frame_id = line.substr(frame_start);
-            trajSwitch = true;
-        }
-	else
-	{
-	    mapFile << line << std::endl;
-	}
-    }
-
-    ltrFile.close();
-    mapFile.close();
-   
-    norlab_icp_mapper_ros::LoadMap srv;
-    srv.request.map_file_name.data = "/tmp/map.vtk";
-    int trajLengthInd = plannedTrajectory.poses.size()-1;
-    srv.request.pose.position.x = plannedTrajectory.poses[trajLengthInd].pose.position.x;
-    srv.request.pose.position.y = plannedTrajectory.poses[trajLengthInd].pose.position.y;
-    srv.request.pose.orientation.x = plannedTrajectory.poses[trajLengthInd].pose.orientation.x;
-    srv.request.pose.orientation.y = plannedTrajectory.poses[trajLengthInd].pose.orientation.y;
-    srv.request.pose.orientation.z = plannedTrajectory.poses[trajLengthInd].pose.orientation.z;
-    srv.request.pose.orientation.w = plannedTrajectory.poses[trajLengthInd].pose.orientation.w;
-    client_loadMap.call(srv);
-
-    std::remove("/tmp/map.vtk");
-
-    plannedTrajectory.header.frame_id = load_frame_id;
-    for (int i = 0; i < plannedTrajectory.poses.size(); i++)
-    {
-        plannedTrajectory.poses[i].header.frame_id = load_frame_id;
-    }
-
-
-    // publish trajectory
-    publishTrajectory(plannedTrajectoryPublisher, plannedTrajectory, load_frame_id, ros::Time::now());
-
+    loadLTR(req.file_name, false);
     return true;
 }
 
+bool loadLTRFromEndServiceCallback(norlab_teach_repeat::LoadMapTraj::Request& req, norlab_teach_repeat::LoadMapTraj::Response& res)
+{
+    loadLTR(req.file_name, true);
+    return true;
+}
 
 int main(int argc, char** argv)
 {
@@ -665,27 +422,20 @@ int main(int argc, char** argv)
 	
 	ros::ServiceServer startRecordingService = nodeHandle.advertiseService("start_recording", startRecordingServiceCallback);
 	ros::ServiceServer stopRecordingService = nodeHandle.advertiseService("stop_recording", stopRecordingServiceCallback);
-	ros::ServiceServer clearTrajectoryService = nodeHandle.advertiseService("clear_trajectory", clearTrajectoryServiceCallback);
-	ros::ServiceServer playTrajectoryService = nodeHandle.advertiseService("play_trajectory", playTrajectoryServiceCallback);
-	ros::ServiceServer cancelTrajectoryService = nodeHandle.advertiseService("cancel_trajectory", cancelTrajectoryServiceCallback);
-    ros::ServiceServer reverseTrajectoryService = nodeHandle.advertiseService("reverse_trajectory", reverseTrajectoryServiceCallback);
-    ros::ServiceServer reverseRobotDirService = nodeHandle.advertiseService("reverse_dir", reverseRobotDirServiceCallback);
-    ros::ServiceServer playReverseTrajectoryService = nodeHandle.advertiseService("play_reverse_trajectory", playReverseTrajectoryServiceCallback);
-    ros::ServiceServer playAutoTrajectoryService = nodeHandle.advertiseService("play_auto", playAutoTrajectoryServiceCallback);
-    ros::ServiceServer saveTrajectoryService = nodeHandle.advertiseService("save_trajectory", saveTrajectoryServiceFun);
-    ros::ServiceServer loadTrajectoryService = nodeHandle.advertiseService("load_trajectory", loadTrajectoryServiceFun);
-    ros::ServiceServer saveTrajectoryMapService = nodeHandle.advertiseService("save_map_trajectory", saveTrajectoryMapServiceFun);
-    ros::ServiceServer loadTrajectoryMapService = nodeHandle.advertiseService("load_map_trajectory", loadTrajectoryMapServiceFun);
-    ros::ServiceServer loadTrajectoryMapReverseService = nodeHandle.advertiseService("load_map_trajectory_reverse", loadTrajectoryMapReverseServiceFun);
+    ros::ServiceServer playTrajectoryService = nodeHandle.advertiseService("play_trajectory", playTrajectoryServiceCallback);
+    ros::ServiceServer clearTrajectoryService = nodeHandle.advertiseService("clear_trajectory", clearTrajectoryServiceCallback);
+    ros::ServiceServer cancelTrajectoryService = nodeHandle.advertiseService("cancel_trajectory", cancelTrajectoryServiceCallback);
 
-    client_saveMap = nodeHandle.serviceClient<norlab_icp_mapper_ros::SaveMap>("save_map");
-    client_loadMap = nodeHandle.serviceClient<norlab_icp_mapper_ros::LoadMap>("load_map");
+    ros::ServiceServer saveLTRService = nodeHandle.advertiseService("save_ltr", saveLTRServiceCallback);
+    ros::ServiceServer loadLTRService = nodeHandle.advertiseService("load_ltr", loadLTRServiceCallback);
+    ros::ServiceServer loadLTRFromEndService = nodeHandle.advertiseService("load_ltr_from_end", loadLTRFromEndServiceCallback);
 
-    client_enable_Mapping = nodeHandle.serviceClient<std_srvs::Empty>("enable_mapping");
-    client_disable_Mapping = nodeHandle.serviceClient<std_srvs::Empty>("disable_mapping");
+    saveMapClient = nodeHandle.serviceClient<norlab_icp_mapper_ros::SaveMap>("save_map");
+    loadMapClient = nodeHandle.serviceClient<norlab_icp_mapper_ros::LoadMap>("load_map");
+    enableMappingClient = nodeHandle.serviceClient<std_srvs::Empty>("enable_mapping");
+    disableMappingClient = nodeHandle.serviceClient<std_srvs::Empty>("disable_mapping");
 
 	privateNodeHandle.param<float>("trajectory_speed", trajectorySpeed, 5.0);
-	
 	privateNodeHandle.param<float>("delay_between_waypoints", delayBetweenWaypoints, 0.5);
 	privateNodeHandle.param<float>("trajectory_speed", trajectorySpeed, 1.0);
 	
@@ -695,7 +445,8 @@ int main(int argc, char** argv)
 	simpleActionClient = std::unique_ptr<actionlib::SimpleActionClient<path_msgs::FollowPathAction>>(
 			new actionlib::SimpleActionClient<path_msgs::FollowPathAction>("follow_path", true));
 	
-	ros::spin();
+	ros::MultiThreadedSpinner spinner;
+    spinner.spin();
 	
 	return 0;
 }
