@@ -1,6 +1,6 @@
 <?xml version="1.0"?>
 <package format="2">
-  <name>WILN</name>
+  <name>wiln</name>
   <version>0.0.2</version>
   <description>A node that creates a trajectory and sends it to the controller, with other parameters.</description>
 
@@ -13,13 +13,13 @@
   <!-- One license tag required, multiple allowed, one license per tag -->
   <!-- Commonly used license strings: -->
   <!--   BSD, MIT, Boost Software License, GPLv2, GPLv3, LGPLv2.1, LGPLv3 -->
-  <!-- license>new BSD</license -->
+  <license>Pending wiln license</license>
 
 
   <!-- Url tags are optional, but multiple are allowed, one per tag -->
   <!-- Optional attribute type can be: website, bugtracker, or repository -->
   <!-- Example: -->
-  <!-- <url type="website">http://wiki.ros.org/norlab_teach_repeat</url> -->
+  <!-- <url type="website">http://wiki.ros.org/WILN</url> -->
 
 
   <!-- Author tags are optional, multiple are allowed, one per tag -->
