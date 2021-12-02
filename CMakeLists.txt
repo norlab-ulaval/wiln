@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 2.8.3)
-project(norlab_teach_repeat)
+project(WILN)
 
 ## Compile as C++11, supported in ROS Kinetic and newer
 # add_compile_options(-std=c++11)
@@ -131,7 +131,7 @@ include_directories(
 ## Declare a C++ executable
 ## With catkin_make all packages are built within a single CMake context
 ## The recommended prefix ensures that target names across packages don't collide
-add_executable(norlab_teach_repeat_node src/main.cpp)
+add_executable(WILN_node src/main.cpp)
 
 ## Rename C++ executable without prefix
 ## The above recommended prefix causes long target names, the following renames the
@@ -141,10 +141,10 @@ add_executable(norlab_teach_repeat_node src/main.cpp)
 
 ## Add cmake target dependencies of the executable
 ## same as for the library above
-add_dependencies(norlab_teach_repeat_node ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
+add_dependencies(WILN_node ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
 
 ## Specify libraries to link a library or executable target against
-target_link_libraries(norlab_teach_repeat_node
+target_link_libraries(WILN_node
   ${catkin_LIBRARIES}
 )
 
