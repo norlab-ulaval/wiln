@@ -32,6 +32,8 @@ Then, in your ROS catkin workspace, add the ROS packages to perform SLAM
     cd && cd catkin_ws/src
     git clone git@github.com:norlab-ulaval/norlab_icp_mapper_ros.git
     git clone git@github.com:norlab-ulaval/libpointmatcher_ros.git
+    git clone git@github.com:norlab-ulaval/pointcloud_motion_deskew.git
+    git clone git@github.com:norlab-ulaval/odom_to_pose_converter.git
     cd .. && catkin_make
 
 ### Setting up GeRoNa
@@ -51,6 +53,8 @@ First, install the dependencies. For example, from your workspace root directory
 Quick start
 ------------
 
+General note : This assumes that you already have standard [timestamped lidar scan](https://github.com/norlab-ulaval/ros_rslidar), [imu](https://github.com/ethz-asl/ethzasl_xsens_driver) and general odometry nodes running. 
+
 ### Creating a params launch file
 
 Two distinct configuration files are required. The first ones are intended to define the path following parameters, multiple examples can be found in the [`params/controller`](https://github.com/norlab-ulaval/WILN/tree/master/params/controller) directory. For an extensive definition of parameters, please refer to the [GeRoNa wiki](https://github.com/cogsys-tuebingen/gerona/wiki/path-follower-parameters). 
@@ -64,5 +68,15 @@ General launch files will launch the various nodes required for navigation. They
 
 General operation and services
 ------------
+
+The framework is divided into two phases: teach and repeat. During the teach phase, an operator drives the robot along a desired route. The robot simultaneously localizes and builds a map of the environment. All robot poses are logged and represent the reference trajectory. 
+
+During the repeat phase, the robot repeats a given route. This route can either be a map that has just been recorder or a loaded map that was saved on disk. During this phase, the system registers point clouds to the map to localize but does not update the map.
+
+The following table lists the various ROS services that enable the teach-and-repeat framework:
+
+|             Service name             |                                                    Description                                                    |          Parameters         |
+|:----------------------------:|:-----------------------------------------------------------------------------------------------------------:|:--------------------------------:|
+| /start_recording | Starts recording poses to build the reference map (cannot be called if another trajectory is already loaded) | None |
 
 

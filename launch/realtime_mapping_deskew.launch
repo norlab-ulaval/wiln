@@ -1,6 +1,6 @@
 <launch>
-	<node pkg="norlab_icp_mapper_ros" type="mapper_node" name="mapper_node" output="screen">
-		<remap from="points_in" to="rslidar32_points"/>
+	<node pkg="norlab_icp_mapper_ros" type="mapper_node" name="mapper_node" output="screen" >
+		<remap from="points_in" to="rslidar32_points_deskewed"/>
 		<param name="robot_frame" value="base_link"/>
 		<param name="odom_frame" value="odom"/>
 		<param name="icp_config" value="$(find warthog_mapping)/params/realtime_icp_config.yaml"/>
@@ -9,14 +9,19 @@
 		<param name="map_update_condition" value="delay"/>
 		<param name="map_update_delay" value="0"/>
 		<param name="sensor_max_range" value="80"/>
-		<param name="min_dist_new_point" value="0.3"/>
+		<param name="min_dist_new_point" value="0.1"/>
 		<param name="compute_prob_dynamic" value="true"/>
 		<param name="map_tf_publish_rate" value="100"/>
 	</node>
 
-	<node pkg="imu_odom" type="imu_odom_node" name="imu_odom_node" output="screen">
+	<node  name="pcl_deskew_node" pkg="pointcloud_motion_deskew" type="pointcloud2_deskew_node" >    
+		 <remap from="input_point_cloud" to="rslidar32_points" />  
+		 <remap from="output_point_cloud" to="rslidar32_points_deskewed" />  
+	</node>
+
+	<!-- <node pkg="imu_odom" type="imu_odom_node" name="imu_odom_node" output="screen">
                 <remap from="imu_topic" to="/MTI_imu/data"/>
                 <param name="real_time" value="true"/>
                 <param name="imu_frame" value="mti10"/>
-        </node>
+        </node> -->
 </launch>

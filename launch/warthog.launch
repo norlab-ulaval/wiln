@@ -18,4 +18,5 @@
 		<param name="robot_frame" value="base_link" />
 		<param name="controller_type" value="$(arg controller_type)" />
 	</node>
+
 </launch>
