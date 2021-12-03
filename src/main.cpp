@@ -394,13 +394,13 @@ void loadLTR(std::string fileName, bool fromEnd)
     publishTrajectory(plannedTrajectoryPublisher, plannedTrajectory, pathFrameId, ros::Time::now());
 }
 
-bool loadLTRServiceCallback(norlab_teach_repeat::LoadMapTraj::Request& req, norlab_teach_repeat::LoadMapTraj::Response& res)
+bool loadLTRServiceCallback(wiln::LoadMapTraj::Request& req, wiln::LoadMapTraj::Response& res)
 {
     loadLTR(req.file_name, false);
     return true;
 }
 
-bool loadLTRFromEndServiceCallback(norlab_teach_repeat::LoadMapTraj::Request& req, norlab_teach_repeat::LoadMapTraj::Response& res)
+bool loadLTRFromEndServiceCallback(wiln::LoadMapTraj::Request& req, wiln::LoadMapTraj::Response& res)
 {
     loadLTR(req.file_name, true);
     return true;
