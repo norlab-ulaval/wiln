@@ -9,10 +9,10 @@
 #include <path_msgs/FollowPathActionResult.h>
 #include <actionlib/client/simple_action_client.h>
 #include <tf2/LinearMath/Quaternion.h>
-#include "norlab_teach_repeat/SaveMapTraj.h"
-#include "norlab_teach_repeat/LoadMapTraj.h"
-#include <norlab_icp_mapper_ros/SaveMap.h>
-#include <norlab_icp_mapper_ros/LoadMap.h>
+#include "wiln/SaveMapTraj.h"
+#include "wiln/LoadMapTraj.h"
+#include <norlab_icp_mapper_ros//SaveMap.h>
+#include <norlab_icp_mapper_ros//LoadMap.h>
 #include "nav_msgs/Odometry.h"
 
 float delayBetweenWaypoints;
@@ -281,7 +281,7 @@ bool cancelTrajectoryServiceCallback(std_srvs::Empty::Request& req, std_srvs::Em
 	return true;
 }
 
-bool saveLTRServiceCallback(norlab_teach_repeat::SaveMapTraj::Request& req, norlab_teach_repeat::SaveMapTraj::Response& res)
+bool saveLTRServiceCallback(wiln::SaveMapTraj::Request& req, wiln::SaveMapTraj::Response& res)
 {
     norlab_icp_mapper_ros::SaveMap saveMapService;
     std::string mapName = req.file_name.substr(0, req.file_name.rfind('.')) + ".vtk";
@@ -408,7 +408,7 @@ bool loadLTRFromEndServiceCallback(norlab_teach_repeat::LoadMapTraj::Request& re
 
 int main(int argc, char** argv)
 {
-	ros::init(argc, argv, "norlab_teach_repeat_node");
+	ros::init(argc, argv, "wiln_node");
 	ros::NodeHandle nodeHandle;
 	ros::NodeHandle privateNodeHandle("~");
 	
