@@ -17,6 +17,7 @@
 
 float delayBetweenWaypoints;
 float trajectorySpeed;
+int lowPassFilterWindowSize;
 
 bool playing;
 bool recording;
@@ -149,6 +150,36 @@ bool startRecordingServiceCallback(std_srvs::Empty::Request& req, std_srvs::Empt
 	return true;
 }
 
+path_msgs::DirectionalPath smoothTrajectoryLowPass(const path_msgs::DirectionalPath& roughTrajectory)
+{
+    path_msgs::DirectionalPath smoothTrajectory(roughTrajectory);
+    double windowNeighborSumX;
+    double windowNeighborSumY;
+    double windowNeighborSumZ;
+    double windowTotalDistance;
+    double windowTotalDistanceInverse;
+
+    for (int i = lowPassFilterWindowSize; i < roughTrajectory.poses.size() - lowPassFilterWindowSize; i++)
+    {
+        windowNeighborSumX = 0;
+        windowNeighborSumY = 0;
+        windowNeighborSumZ = 0;
+        windowTotalDistance = 0;
+        for (int j = i - lowPassFilterWindowSize; j < i + lowPassFilterWindowSize + 1; i++)
+        {
+            windowNeighborSumX += roughTrajectory.poses[j].pose.position.x;
+            windowNeighborSumY += roughTrajectory.poses[j].pose.position.y;
+            windowNeighborSumZ += roughTrajectory.poses[j].pose.position.z;
+            windowTotalDistance += 1;
+        }
+        windowTotalDistanceInverse = 1/windowTotalDistance;
+        smoothTrajectory.poses[i].pose.position.x = windowTotalDistanceInverse * windowNeighborSumX;
+        smoothTrajectory.poses[i].pose.position.y = windowTotalDistanceInverse * windowNeighborSumY;
+        smoothTrajectory.poses[i].pose.position.z = windowTotalDistanceInverse * windowNeighborSumZ;
+    }
+    return smoothTrajectory;
+}
+
 bool stopRecordingServiceCallback(std_srvs::Empty::Request& req, std_srvs::Empty::Response& res)
 {
 	if(!recording)
@@ -156,8 +187,9 @@ bool stopRecordingServiceCallback(std_srvs::Empty::Request& req, std_srvs::Empty
 		ROS_WARN("Trajectory is already not being recorded.");
 		return false;
 	}
-	
+
 	recording = false;
+    plannedTrajectory = smoothTrajectoryLowPass(plannedTrajectory);
 	return true;
 }
 
@@ -435,9 +467,9 @@ int main(int argc, char** argv)
     enableMappingClient = nodeHandle.serviceClient<std_srvs::Empty>("enable_mapping");
     disableMappingClient = nodeHandle.serviceClient<std_srvs::Empty>("disable_mapping");
 
-	privateNodeHandle.param<float>("trajectory_speed", trajectorySpeed, 5.0);
-	privateNodeHandle.param<float>("delay_between_waypoints", delayBetweenWaypoints, 0.5);
 	privateNodeHandle.param<float>("trajectory_speed", trajectorySpeed, 1.0);
+	privateNodeHandle.param<float>("delay_between_waypoints", delayBetweenWaypoints, 0.5);
+	privateNodeHandle.param<int>("low_pass_filter_window_size", lowPassFilterWindowSize, 5);
 	
 	recording = false;
 	playing = false;

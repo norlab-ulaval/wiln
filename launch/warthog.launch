@@ -8,6 +8,7 @@
 	<node pkg="wiln" type="wiln_node" name="wiln_node" output="screen">
 		<remap from="pose_in" to="pose" />
 		<param name="trajectory_speed" value="2.0" />
+		<param name="low_pass_window_size" value="5" />
 	</node>
 
 	<include file="$(find wiln)/params/warthog_$(arg controller_type)_params.launch" />
