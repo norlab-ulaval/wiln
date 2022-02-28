@@ -165,7 +165,7 @@ path_msgs::DirectionalPath smoothTrajectoryLowPass(const path_msgs::DirectionalP
         windowNeighborSumY = 0;
         windowNeighborSumZ = 0;
         windowTotalDistance = 0;
-        for (int j = i - lowPassFilterWindowSize; j < i + lowPassFilterWindowSize + 1; i++)
+        for (int j = i - lowPassFilterWindowSize; j < i + lowPassFilterWindowSize + 1; j++)
         {
             windowNeighborSumX += roughTrajectory.poses[j].pose.position.x;
             windowNeighborSumY += roughTrajectory.poses[j].pose.position.y;
@@ -189,13 +189,20 @@ bool stopRecordingServiceCallback(std_srvs::Empty::Request& req, std_srvs::Empty
 	}
 
 	recording = false;
-    plannedTrajectory = smoothTrajectoryLowPass(plannedTrajectory);
 	return true;
 }
 
 bool clearTrajectoryServiceCallback(std_srvs::Empty::Request& req, std_srvs::Empty::Response& res)
 {
 	plannedTrajectory.poses.clear();
+	return true;
+}
+
+bool smoothTrajectoryServiceCallback(std_srvs::Empty::Request& req, std_srvs::Empty::Response& res)
+{
+
+	path_msgs::DirectionalPath smoothTrajectory = smoothTrajectoryLowPass(plannedTrajectory);
+	plannedTrajectory = smoothTrajectory;
 	return true;
 }
 
@@ -456,6 +463,7 @@ int main(int argc, char** argv)
 	ros::ServiceServer stopRecordingService = nodeHandle.advertiseService("stop_recording", stopRecordingServiceCallback);
     ros::ServiceServer playTrajectoryService = nodeHandle.advertiseService("play_trajectory", playTrajectoryServiceCallback);
     ros::ServiceServer clearTrajectoryService = nodeHandle.advertiseService("clear_trajectory", clearTrajectoryServiceCallback);
+    ros::ServiceServer smoothTrajectoryService = nodeHandle.advertiseService("smooth_trajectory", smoothTrajectoryServiceCallback);
     ros::ServiceServer cancelTrajectoryService = nodeHandle.advertiseService("cancel_trajectory", cancelTrajectoryServiceCallback);
 
     ros::ServiceServer saveLTRService = nodeHandle.advertiseService("save_ltr", saveLTRServiceCallback);
