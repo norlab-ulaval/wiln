@@ -11,8 +11,9 @@
 #include <tf2/LinearMath/Quaternion.h>
 #include "wiln/SaveMapTraj.h"
 #include "wiln/LoadMapTraj.h"
-#include <norlab_icp_mapper_ros//SaveMap.h>
-#include <norlab_icp_mapper_ros//LoadMap.h>
+#include "wiln/PlayLoop.h"
+#include <norlab_icp_mapper_ros/SaveMap.h>
+#include <norlab_icp_mapper_ros/LoadMap.h>
 #include "nav_msgs/Odometry.h"
 
 float delayBetweenWaypoints;
@@ -63,12 +64,12 @@ void publishTrajectory(const ros::Publisher& publisher, path_msgs::DirectionalPa
 	trajectory.header.frame_id = frame_id;
 	trajectory.header.stamp = stamp;
 	trajectory.forward = true;
-	
+
 	path_msgs::PathSequence pathSequence;
 	pathSequence.header.frame_id = frame_id;
 	pathSequence.header.stamp = stamp;
 	pathSequence.paths.push_back(trajectory);
-	
+
 	publisher.publish(pathSequence);
 }
 
@@ -117,7 +118,7 @@ void realTrajectoryCallback(const geometry_msgs::PoseStamped& poseStamped)
 void trajectoryResultCallback(const path_msgs::FollowPathActionResult& trajectoryResult)
 {
 	playing = false;
-	
+
 	if(trajectoryResult.result.status == path_msgs::FollowPathResult::RESULT_STATUS_SUCCESS)
 	{
 		ROS_INFO("Successfully reached goal!");
@@ -135,13 +136,13 @@ bool startRecordingServiceCallback(std_srvs::Empty::Request& req, std_srvs::Empt
 		ROS_WARN("Trajectory is already being recorded.");
 		return false;
 	}
-	
+
 	if(playing)
 	{
 		ROS_WARN("Cannot start recording, trajectory is currently being played.");
 		return false;
 	}
-	
+
 	recording = true;
 
     std_srvs::Empty enableMappingService = std_srvs::Empty();
@@ -298,11 +299,61 @@ bool playTrajectoryServiceCallback(std_srvs::Empty::Request& req, std_srvs::Empt
     goal.follower_options.init_mode = path_msgs::FollowerOptions::INIT_MODE_CONTINUE;
     goal.follower_options.velocity = trajectorySpeed;
     goal.path.header.frame_id = plannedTrajectory.poses[0].header.frame_id;
-    goal.path.header.stamp = ros::Time::now();;
+    goal.path.header.stamp = ros::Time::now();
     goal.path.paths.push_back(plannedTrajectory);
     simpleActionClient->sendGoal(goal);
 
     return true;
+}
+
+bool playLoopTrajectoryServiceCallback(wiln::PlayLoop::Request& req, wiln::PlayLoop::Response& res)
+{
+	if(playing)
+	{
+		ROS_WARN("Trajectory is already being played.");
+		return false;
+	}
+
+	if(recording)
+	{
+		ROS_WARN("Cannot play trajectory while recording.");
+		return false;
+	}
+
+	if(plannedTrajectory.poses.empty())
+	{
+		ROS_WARN("Cannot play an empty trajectory.");
+		return false;
+	}
+
+	path_msgs::DirectionalPath cutTrajectory = plannedTrajectory;
+	int poseIndex = cutTrajectory.poses.size() - 1;
+	while(poseIndex >= 1 && computeEuclideanDistanceBetweenPoses(cutTrajectory.poses[poseIndex-1].pose, cutTrajectory.poses[0].pose) <
+					computeEuclideanDistanceBetweenPoses(cutTrajectory.poses[poseIndex].pose, cutTrajectory.poses[0].pose))
+	{
+		cutTrajectory.poses.erase(cutTrajectory.poses.begin() + poseIndex);
+		--poseIndex;
+	}
+
+	playing = true;
+
+	realTrajectory.poses.clear();
+
+	std_srvs::Empty disableMappingService = std_srvs::Empty();
+	disableMappingClient.call(disableMappingService);
+
+	path_msgs::FollowPathGoal goal;
+	goal.follower_options.init_mode = path_msgs::FollowerOptions::INIT_MODE_CONTINUE;
+	goal.follower_options.velocity = trajectorySpeed;
+	goal.path.header.frame_id = plannedTrajectory.poses[0].header.frame_id;
+	goal.path.header.stamp = ros::Time::now();
+	for(int i = 0; i < req.nbLoops; ++i)
+	{
+		goal.path.paths.push_back(cutTrajectory);
+	}
+	simpleActionClient->sendGoal(goal);
+
+	return true;
 }
 
 bool cancelTrajectoryServiceCallback(std_srvs::Empty::Request& req, std_srvs::Empty::Response& res)
@@ -312,11 +363,11 @@ bool cancelTrajectoryServiceCallback(std_srvs::Empty::Request& req, std_srvs::Em
 		ROS_WARN("Cannot cancel trajectory, no trajectory is being played.");
 		return false;
 	}
-	
+
 	playing = false;
-	
+
 	simpleActionClient->cancelAllGoals();
-	
+
 	return true;
 }
 
@@ -349,7 +400,6 @@ bool saveLTRServiceCallback(wiln::SaveMapTraj::Request& req, wiln::SaveMapTraj::
 
 void loadLTR(std::string fileName, bool fromEnd)
 {
-
     std::ofstream mapFile("/tmp/map.vtk");
     std::ifstream ltrFile(fileName);
     path_msgs::DirectionalPath loadTrajectory;
@@ -450,18 +500,19 @@ int main(int argc, char** argv)
 	ros::init(argc, argv, "wiln_node");
 	ros::NodeHandle nodeHandle;
 	ros::NodeHandle privateNodeHandle("~");
-	
+
 	ros::Subscriber plannedTrajectorySubscriber = nodeHandle.subscribe("pose_in", 1000, plannedTrajectoryCallback);
 	ros::Subscriber realTrajectorySubscriber = nodeHandle.subscribe("pose_in", 1000, realTrajectoryCallback);
 	ros::Subscriber trajectoryResultSubscriber = nodeHandle.subscribe("follow_path/result", 1000, trajectoryResultCallback);
     ros::Subscriber icpOdomSubscriber = nodeHandle.subscribe("icp_odom", 1000, icpOdomCallback);
-	
+
 	plannedTrajectoryPublisher = nodeHandle.advertise<path_msgs::PathSequence>("planned_trajectory", 1000, true);
 	realTrajectoryPublisher = nodeHandle.advertise<path_msgs::PathSequence>("real_trajectory", 1000, true);
-	
+
 	ros::ServiceServer startRecordingService = nodeHandle.advertiseService("start_recording", startRecordingServiceCallback);
 	ros::ServiceServer stopRecordingService = nodeHandle.advertiseService("stop_recording", stopRecordingServiceCallback);
     ros::ServiceServer playTrajectoryService = nodeHandle.advertiseService("play_trajectory", playTrajectoryServiceCallback);
+    ros::ServiceServer playLoopTrajectoryService = nodeHandle.advertiseService("play_loop_trajectory", playLoopTrajectoryServiceCallback);
     ros::ServiceServer clearTrajectoryService = nodeHandle.advertiseService("clear_trajectory", clearTrajectoryServiceCallback);
     ros::ServiceServer smoothTrajectoryService = nodeHandle.advertiseService("smooth_trajectory", smoothTrajectoryServiceCallback);
     ros::ServiceServer cancelTrajectoryService = nodeHandle.advertiseService("cancel_trajectory", cancelTrajectoryServiceCallback);
@@ -478,15 +529,15 @@ int main(int argc, char** argv)
 	privateNodeHandle.param<float>("trajectory_speed", trajectorySpeed, 1.0);
 	privateNodeHandle.param<float>("delay_between_waypoints", delayBetweenWaypoints, 0.5);
 	privateNodeHandle.param<int>("low_pass_filter_window_size", lowPassFilterWindowSize, 5);
-	
+
 	recording = false;
 	playing = false;
-	
+
 	simpleActionClient = std::unique_ptr<actionlib::SimpleActionClient<path_msgs::FollowPathAction>>(
 			new actionlib::SimpleActionClient<path_msgs::FollowPathAction>("follow_path", true));
-	
+
 	ros::MultiThreadedSpinner spinner;
     spinner.spin();
-	
+
 	return 0;
 }

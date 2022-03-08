@@ -56,6 +56,7 @@ find_package(catkin REQUIRED COMPONENTS
    FILES
    SaveMapTraj.srv
    LoadMapTraj.srv
+   PlayLoop.srv
  )
 
 ## Generate actions in the 'action' folder

@@ -75,12 +75,13 @@ During the repeat phase, the robot repeats a given route. This route can either 
 
 The following table lists the various ROS services that enable the teach-and-repeat framework:
 
-|             Service name             |                                                    Description                                                    |          Parameters         |
-|:----------------------------:|:-----------------------------------------------------------------------------------------------------------:|:--------------------------------:|
-| /start_recording | Starts recording poses to build the reference map (cannot be called if another trajectory is already loaded). | None |
-| /stop_recording | Stops the trajectory recording (cannot be called is the recording was not started). | None |
-| /clear_trajectory | Clears the current trajectory from active memory. | None |
-| /play_trajectory | Starts the repeat phase. The robot will repeat the trajectory backwards if it is located at it's end and the system supports both forwards or reverse motion. | None |
-| /cancel_trajectory | Cancels the current repeat phase in the event of system failure. | None |
-| /save_ltr | Saves the current map and trajectory in a `.ltr` file. If no directory is specified, the file will be saved in the `home/<user>/.ros` directory. | `file_name` (string) |
-| /load_ltr | loads a specicied `.ltr` file (cannot be executed if a map/trajectory is already loaded). If not directory is specified, will load from the `home/<user>/.ros` directory. |  `file_name` (string) |
+|     Service name      |                                                                                Description                                                                                |      Parameters      |
+|:---------------------:|:-------------------------------------------------------------------------------------------------------------------------------------------------------------------------:|:--------------------:|
+|   /start_recording    |                               Starts recording poses to build the reference map (cannot be called if another trajectory is already loaded).                               |         None         |
+|    /stop_recording    |                                            Stops the trajectory recording (cannot be called is the recording was not started).                                            |         None         |
+|   /clear_trajectory   |                                                             Clears the current trajectory from active memory.                                                             |         None         |
+|   /play_trajectory    |       Starts the repeat phase. The robot will repeat the trajectory backwards if it is located at it's end and the system supports both forwards or reverse motion.       |         None         |
+| /play_loop_trajectory |                                                              Starts the repeat phase for a loop trajectory.                                                               |   nbLoops (uint32)   |
+|  /cancel_trajectory   |                                                     Cancels the current repeat phase in the event of system failure.                                                      |         None         |
+|       /save_ltr       |             Saves the current map and trajectory in a `.ltr` file. If no directory is specified, the file will be saved in the `home/<user>/.ros` directory.              | `file_name` (string) |
+|       /load_ltr       | loads a specicied `.ltr` file (cannot be executed if a map/trajectory is already loaded). If not directory is specified, will load from the `home/<user>/.ros` directory. | `file_name` (string) |
