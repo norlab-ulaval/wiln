@@ -14,6 +14,7 @@
 #include "wiln/PlayLoop.h"
 #include <norlab_icp_mapper_ros/SaveMap.h>
 #include <norlab_icp_mapper_ros/LoadMap.h>
+#include <geometry_msgs/Twist.h>
 #include "nav_msgs/Odometry.h"
 
 float delayBetweenWaypoints;
@@ -22,22 +23,22 @@ int lowPassFilterWindowSize;
 
 bool playing;
 bool recording;
+std::atomic_bool drivingForward;
 ros::Publisher plannedTrajectoryPublisher;
 ros::Publisher realTrajectoryPublisher;
 std::unique_ptr<actionlib::SimpleActionClient<path_msgs::FollowPathAction>> simpleActionClient;
-path_msgs::DirectionalPath plannedTrajectory;
-path_msgs::DirectionalPath realTrajectory;
+path_msgs::PathSequence plannedTrajectory;
+path_msgs::PathSequence realTrajectory;
 geometry_msgs::Pose robotPose;
 std::mutex robotPoseLock;
 ros::ServiceClient saveMapClient;
 ros::ServiceClient loadMapClient;
 ros::ServiceClient enableMappingClient;
 ros::ServiceClient disableMappingClient;
+std::atomic_bool lastDrivingDirection;
 
 const int FRAME_ID_START_POSITION = 11; // length of string : "frame_id : "
 const std::string TRAJECTORY_DELIMITER = "#############################";
-
-//class SaveMap;
 
 const std::map<int8_t, std::string> FOLLOW_PATH_RESULTS = {
 		{ 0u, "RESULT_STATUS_STOPPED_BY_SUPERVISOR" },
@@ -59,39 +60,50 @@ void icpOdomCallback(const nav_msgs::Odometry& odometry)
     robotPoseLock.unlock();
 }
 
-void publishTrajectory(const ros::Publisher& publisher, path_msgs::DirectionalPath& trajectory, const std::string& frame_id, const ros::Time& stamp)
+void commandVelocityCallback(const geometry_msgs::Twist& commandedVelocity)
 {
-	trajectory.header.frame_id = frame_id;
-	trajectory.header.stamp = stamp;
-	trajectory.forward = true;
-
-	path_msgs::PathSequence pathSequence;
-	pathSequence.header.frame_id = frame_id;
-	pathSequence.header.stamp = stamp;
-	pathSequence.paths.push_back(trajectory);
-
-	publisher.publish(pathSequence);
+	drivingForward.store(commandedVelocity.linear.x >= 0.0);
 }
 
 void plannedTrajectoryCallback(const geometry_msgs::PoseStamped& poseStamped)
 {
     if(recording)
     {
-	    double distance = 0;
-        if (!plannedTrajectory.poses.empty())
+		if(plannedTrajectory.paths.empty())
+		{
+			path_msgs::DirectionalPath directionalPath;
+			directionalPath.header.frame_id = poseStamped.header.frame_id;
+			directionalPath.header.stamp = ros::Time::now();
+			directionalPath.forward = true;
+			plannedTrajectory.paths.push_back(directionalPath);
+		}
+
+		double distance = 0;
+		if(!plannedTrajectory.paths.back().poses.empty())
         {
-            geometry_msgs::PoseStamped lastPose = plannedTrajectory.poses[plannedTrajectory.poses.size()-1];
+            geometry_msgs::PoseStamped lastPose = plannedTrajectory.paths.back().poses.back();
             distance = std::sqrt(std::pow(poseStamped.pose.position.x - lastPose.pose.position.x, 2) +
                 std::pow(poseStamped.pose.position.y - lastPose.pose.position.y, 2) +
                 std::pow(poseStamped.pose.position.z - lastPose.pose.position.z, 2));
         }
-        if (distance >= 0.05 || plannedTrajectory.poses.empty())
+
+        if (distance >= 0.05 || plannedTrajectory.paths.back().poses.empty())
         {
-            plannedTrajectory.poses.push_back(poseStamped);
-            publishTrajectory(plannedTrajectoryPublisher, plannedTrajectory, poseStamped.header.frame_id, ros::Time::now());
+			if(lastDrivingDirection.load() != drivingForward.load())
+			{
+				path_msgs::DirectionalPath directionalPath;
+				directionalPath.header.frame_id = poseStamped.header.frame_id;
+				directionalPath.header.stamp = ros::Time::now();
+				directionalPath.forward = drivingForward.load();
+				plannedTrajectory.paths.push_back(directionalPath);
+			}
+
+            plannedTrajectory.paths.back().poses.push_back(poseStamped);
+            plannedTrajectoryPublisher.publish(plannedTrajectory);
             plannedTrajectory.header.frame_id = poseStamped.header.frame_id;
             plannedTrajectory.header.stamp = poseStamped.header.stamp;
         }
+		lastDrivingDirection.store(drivingForward.load());
     }
 }
 
@@ -99,19 +111,39 @@ void realTrajectoryCallback(const geometry_msgs::PoseStamped& poseStamped)
 {
 	if(playing)
     {
-        double distance = 0;
-        if (!realTrajectory.poses.empty())
+		if(realTrajectory.paths.empty())
+		{
+			path_msgs::DirectionalPath directionalPath;
+			directionalPath.header.frame_id = poseStamped.header.frame_id;
+			directionalPath.header.stamp = ros::Time::now();
+			directionalPath.forward = true;
+			realTrajectory.paths.push_back(directionalPath);
+		}
+
+		double distance = 0;
+		if(!realTrajectory.paths.back().poses.empty())
         {
-            geometry_msgs::PoseStamped lastPose = realTrajectory.poses[realTrajectory.poses.size()-1];
+            geometry_msgs::PoseStamped lastPose = realTrajectory.paths.back().poses.back();
             distance = std::sqrt(std::pow(poseStamped.pose.position.x - lastPose.pose.position.x, 2) +
                                  std::pow(poseStamped.pose.position.y - lastPose.pose.position.y, 2) +
                                  std::pow(poseStamped.pose.position.z - lastPose.pose.position.z, 2));
         }
-        if (distance >= 0.05 || realTrajectory.poses.empty())
+
+        if (distance >= 0.05 || realTrajectory.paths.back().poses.empty())
         {
-            realTrajectory.poses.push_back(poseStamped);
-            publishTrajectory(realTrajectoryPublisher, realTrajectory, poseStamped.header.frame_id, ros::Time::now());
+			if(lastDrivingDirection.load() != drivingForward.load())
+			{
+				path_msgs::DirectionalPath directionalPath;
+				directionalPath.header.frame_id = poseStamped.header.frame_id;
+				directionalPath.header.stamp = ros::Time::now();
+				directionalPath.forward = drivingForward.load();
+				realTrajectory.paths.push_back(directionalPath);
+			}
+
+            realTrajectory.paths.back().poses.push_back(poseStamped);
+            realTrajectoryPublisher.publish(realTrajectory);
         }
+		lastDrivingDirection.store(drivingForward.load());
     }
 }
 
@@ -151,33 +183,28 @@ bool startRecordingServiceCallback(std_srvs::Empty::Request& req, std_srvs::Empt
 	return true;
 }
 
-path_msgs::DirectionalPath smoothTrajectoryLowPass(const path_msgs::DirectionalPath& roughTrajectory)
+path_msgs::PathSequence smoothTrajectoryLowPass(const path_msgs::PathSequence& roughTrajectory)
 {
-    path_msgs::DirectionalPath smoothTrajectory(roughTrajectory);
-    double windowNeighborSumX;
-    double windowNeighborSumY;
-    double windowNeighborSumZ;
-    double windowTotalDistance;
-    double windowTotalDistanceInverse;
+    path_msgs::PathSequence smoothTrajectory(roughTrajectory);
 
-    for (int i = lowPassFilterWindowSize; i < roughTrajectory.poses.size() - lowPassFilterWindowSize; i++)
-    {
-        windowNeighborSumX = 0;
-        windowNeighborSumY = 0;
-        windowNeighborSumZ = 0;
-        windowTotalDistance = 0;
-        for (int j = i - lowPassFilterWindowSize; j < i + lowPassFilterWindowSize + 1; j++)
-        {
-            windowNeighborSumX += roughTrajectory.poses[j].pose.position.x;
-            windowNeighborSumY += roughTrajectory.poses[j].pose.position.y;
-            windowNeighborSumZ += roughTrajectory.poses[j].pose.position.z;
-            windowTotalDistance += 1;
-        }
-        windowTotalDistanceInverse = 1/windowTotalDistance;
-        smoothTrajectory.poses[i].pose.position.x = windowTotalDistanceInverse * windowNeighborSumX;
-        smoothTrajectory.poses[i].pose.position.y = windowTotalDistanceInverse * windowNeighborSumY;
-        smoothTrajectory.poses[i].pose.position.z = windowTotalDistanceInverse * windowNeighborSumZ;
-    }
+	for(int i = 0; i < roughTrajectory.paths.size(); ++i)
+	{
+		for(int j = lowPassFilterWindowSize; j < roughTrajectory.paths[i].poses.size() - lowPassFilterWindowSize; ++j)
+		{
+			double windowNeighborSumX = 0;
+			double windowNeighborSumY = 0;
+			double windowNeighborSumZ = 0;
+			for(int k = j - lowPassFilterWindowSize; k < j + lowPassFilterWindowSize + 1; ++k)
+			{
+				windowNeighborSumX += roughTrajectory.paths[i].poses[k].pose.position.x;
+				windowNeighborSumY += roughTrajectory.paths[i].poses[k].pose.position.y;
+				windowNeighborSumZ += roughTrajectory.paths[i].poses[k].pose.position.z;
+			}
+			smoothTrajectory.paths[i].poses[j].pose.position.x = windowNeighborSumX / ((2 * lowPassFilterWindowSize) + 1);
+			smoothTrajectory.paths[i].poses[j].pose.position.y = windowNeighborSumY / ((2 * lowPassFilterWindowSize) + 1);
+			smoothTrajectory.paths[i].poses[j].pose.position.z = windowNeighborSumZ / ((2 * lowPassFilterWindowSize) + 1);
+		}
+	}
     return smoothTrajectory;
 }
 
@@ -195,15 +222,13 @@ bool stopRecordingServiceCallback(std_srvs::Empty::Request& req, std_srvs::Empty
 
 bool clearTrajectoryServiceCallback(std_srvs::Empty::Request& req, std_srvs::Empty::Response& res)
 {
-	plannedTrajectory.poses.clear();
+	plannedTrajectory.paths.clear();
 	return true;
 }
 
 bool smoothTrajectoryServiceCallback(std_srvs::Empty::Request& req, std_srvs::Empty::Response& res)
 {
-
-	path_msgs::DirectionalPath smoothTrajectory = smoothTrajectoryLowPass(plannedTrajectory);
-	plannedTrajectory = smoothTrajectory;
+	plannedTrajectory = smoothTrajectoryLowPass(plannedTrajectory);
 	return true;
 }
 
@@ -222,16 +247,21 @@ double extractYawFromQuaternion(const geometry_msgs::Quaternion& quaternion)
         quaternion.z);
 }
 
-double computeTrajectoryYaw(const path_msgs::DirectionalPath& trajectory, const geometry_msgs::Pose& pose)
+double computeTrajectoryYaw(const path_msgs::PathSequence& trajectory, const geometry_msgs::Pose& pose)
 {
-    int indexTrajectory = 0;
     double dx = 0;
-    double dy = 0;
-    while(std::sqrt(std::pow(dx, 2) + std::pow(dy, 2)) < 1.0 && indexTrajectory < trajectory.poses.size())
+	double dy = 0;
+	int pathIndex = 0;
+	while(std::sqrt(std::pow(dx, 2) + std::pow(dy, 2)) < 1.0 && pathIndex < trajectory.paths.size())
     {
-        dx = trajectory.poses[indexTrajectory].pose.position.x - pose.position.x;
-        dy = trajectory.poses[indexTrajectory].pose.position.y - pose.position.y;
-        indexTrajectory++;
+		int poseIndex = 0;
+		while(std::sqrt(std::pow(dx, 2) + std::pow(dy, 2)) < 1.0 && poseIndex < trajectory.paths[pathIndex].poses.size())
+		{
+			dx = trajectory.paths[pathIndex].poses[poseIndex].pose.position.x - pose.position.x;
+			dy = trajectory.paths[pathIndex].poses[poseIndex].pose.position.y - pose.position.y;
+			++poseIndex;
+		}
+		++pathIndex;
     }
     return std::atan2(dy, dx);
 }
@@ -250,7 +280,7 @@ bool playTrajectoryServiceCallback(std_srvs::Empty::Request& req, std_srvs::Empt
         return false;
     }
 
-    if(plannedTrajectory.poses.empty())
+    if(plannedTrajectory.paths.empty())
     {
         ROS_WARN("Cannot play an empty trajectory.");
         return false;
@@ -258,18 +288,20 @@ bool playTrajectoryServiceCallback(std_srvs::Empty::Request& req, std_srvs::Empt
 
     robotPoseLock.lock();
 
-    double robotPoseToTrajectoryStartDistance = computeEuclideanDistanceBetweenPoses(robotPose, plannedTrajectory.poses.front().pose);
-    double robotPoseToTrajectoryEndDistance = computeEuclideanDistanceBetweenPoses(robotPose, plannedTrajectory.poses.back().pose);
+    double robotPoseToTrajectoryStartDistance = computeEuclideanDistanceBetweenPoses(robotPose, plannedTrajectory.paths.front().poses.front().pose);
+    double robotPoseToTrajectoryEndDistance = computeEuclideanDistanceBetweenPoses(robotPose, plannedTrajectory.paths.back().poses.back().pose);
     if(robotPoseToTrajectoryEndDistance < robotPoseToTrajectoryStartDistance)
     {
-        std::reverse(plannedTrajectory.poses.begin(), plannedTrajectory.poses.end());
-        ROS_INFO("Reversed trajectory");
+
+        std::reverse(plannedTrajectory.paths.begin(), plannedTrajectory.paths.end());
+		for(int i = 0; i < plannedTrajectory.paths.size(); ++i)
+		{
+			std::reverse(plannedTrajectory.paths[i].poses.begin(), plannedTrajectory.paths[i].poses.end());
+		}
     }
 
     double robotPoseYaw = extractYawFromQuaternion(robotPose.orientation);
-
     double trajectoryStartYaw = computeTrajectoryYaw(plannedTrajectory, robotPose);
-
     double angleDistance = std::fabs(trajectoryStartYaw - robotPoseYaw);
     if (angleDistance > M_PI)
     {
@@ -278,19 +310,16 @@ bool playTrajectoryServiceCallback(std_srvs::Empty::Request& req, std_srvs::Empt
 
     if(angleDistance > M_PI_2)
     {
-        plannedTrajectory.forward = false;
-        ROS_INFO("Going backwards");
-    }
-    else
-    {
-        plannedTrajectory.forward = true;
-        ROS_INFO("Going forwards");
+		for(int i = 0; i < plannedTrajectory.paths.size(); ++i)
+		{
+			plannedTrajectory.paths[i].forward = !plannedTrajectory.paths[i].forward;
+		}
     }
     robotPoseLock.unlock();
 
     playing = true;
 
-    realTrajectory.poses.clear();
+    realTrajectory.paths.clear();
 
     std_srvs::Empty disableMappingService = std_srvs::Empty();
     disableMappingClient.call(disableMappingService);
@@ -298,9 +327,12 @@ bool playTrajectoryServiceCallback(std_srvs::Empty::Request& req, std_srvs::Empt
     path_msgs::FollowPathGoal goal;
     goal.follower_options.init_mode = path_msgs::FollowerOptions::INIT_MODE_CONTINUE;
     goal.follower_options.velocity = trajectorySpeed;
-    goal.path.header.frame_id = plannedTrajectory.poses[0].header.frame_id;
+    goal.path.header.frame_id = plannedTrajectory.paths.front().poses.front().header.frame_id;
     goal.path.header.stamp = ros::Time::now();
-    goal.path.paths.push_back(plannedTrajectory);
+	for(int i = 0; i < plannedTrajectory.paths.size(); ++i)
+	{
+		goal.path.paths.push_back(plannedTrajectory.paths[i]);
+	}
     simpleActionClient->sendGoal(goal);
 
     return true;
@@ -320,24 +352,24 @@ bool playLoopTrajectoryServiceCallback(wiln::PlayLoop::Request& req, wiln::PlayL
 		return false;
 	}
 
-	if(plannedTrajectory.poses.empty())
+	if(plannedTrajectory.paths.empty())
 	{
 		ROS_WARN("Cannot play an empty trajectory.");
 		return false;
 	}
 
-	path_msgs::DirectionalPath cutTrajectory = plannedTrajectory;
-	int poseIndex = cutTrajectory.poses.size() - 1;
-	while(poseIndex >= 1 && computeEuclideanDistanceBetweenPoses(cutTrajectory.poses[poseIndex-1].pose, cutTrajectory.poses[0].pose) <
-					computeEuclideanDistanceBetweenPoses(cutTrajectory.poses[poseIndex].pose, cutTrajectory.poses[0].pose))
+	path_msgs::PathSequence cutTrajectory = plannedTrajectory;
+	int poseIndex = cutTrajectory.paths.back().poses.size() - 1;
+	while(poseIndex >= 1 && computeEuclideanDistanceBetweenPoses(cutTrajectory.paths.back().poses[poseIndex - 1].pose, cutTrajectory.paths.front().poses.front().pose) <
+							computeEuclideanDistanceBetweenPoses(cutTrajectory.paths.back().poses[poseIndex].pose, cutTrajectory.paths.front().poses.front().pose))
 	{
-		cutTrajectory.poses.erase(cutTrajectory.poses.begin() + poseIndex);
+		cutTrajectory.paths.back().poses.erase(cutTrajectory.paths.back().poses.begin() + poseIndex);
 		--poseIndex;
 	}
 
 	playing = true;
 
-	realTrajectory.poses.clear();
+	realTrajectory.paths.clear();
 
 	std_srvs::Empty disableMappingService = std_srvs::Empty();
 	disableMappingClient.call(disableMappingService);
@@ -345,11 +377,14 @@ bool playLoopTrajectoryServiceCallback(wiln::PlayLoop::Request& req, wiln::PlayL
 	path_msgs::FollowPathGoal goal;
 	goal.follower_options.init_mode = path_msgs::FollowerOptions::INIT_MODE_CONTINUE;
 	goal.follower_options.velocity = trajectorySpeed;
-	goal.path.header.frame_id = plannedTrajectory.poses[0].header.frame_id;
+	goal.path.header.frame_id = plannedTrajectory.paths.front().poses.front().header.frame_id;
 	goal.path.header.stamp = ros::Time::now();
 	for(int i = 0; i < req.nbLoops; ++i)
 	{
-		goal.path.paths.push_back(cutTrajectory);
+		for(int j = 0; j < cutTrajectory.paths.size(); ++j)
+		{
+			goal.path.paths.push_back(cutTrajectory.paths[j]);
+		}
 	}
 	simpleActionClient->sendGoal(goal);
 
@@ -381,18 +416,25 @@ bool saveLTRServiceCallback(wiln::SaveMapTraj::Request& req, wiln::SaveMapTraj::
     std::ofstream ltrFile(req.file_name, std::ios::app);
 
     ltrFile << TRAJECTORY_DELIMITER << std::endl;
-    ltrFile << "frame_id : " << plannedTrajectory.poses[0].header.frame_id << std::endl;
+    ltrFile << "frame_id : " << plannedTrajectory.paths.front().poses.front().header.frame_id << std::endl;
 
-    for(int i=0; i<plannedTrajectory.poses.size(); i++)
-    {
-        ltrFile << plannedTrajectory.poses[i].pose.position.x << ","
-                << plannedTrajectory.poses[i].pose.position.y << ","
-                << plannedTrajectory.poses[i].pose.position.z << ","
-                << plannedTrajectory.poses[i].pose.orientation.x << ","
-                << plannedTrajectory.poses[i].pose.orientation.y << ","
-                << plannedTrajectory.poses[i].pose.orientation.z << ","
-                << plannedTrajectory.poses[i].pose.orientation.w << std::endl;
-    }
+	for(int i = 0; i < plannedTrajectory.paths.size(); ++i)
+	{
+		for(int j = 0; j < plannedTrajectory.paths[i].poses.size(); ++j)
+		{
+			ltrFile << plannedTrajectory.paths[i].poses[j].pose.position.x << ","
+					<< plannedTrajectory.paths[i].poses[j].pose.position.y << ","
+					<< plannedTrajectory.paths[i].poses[j].pose.position.z << ","
+					<< plannedTrajectory.paths[i].poses[j].pose.orientation.x << ","
+					<< plannedTrajectory.paths[i].poses[j].pose.orientation.y << ","
+					<< plannedTrajectory.paths[i].poses[j].pose.orientation.z << ","
+					<< plannedTrajectory.paths[i].poses[j].pose.orientation.w << std::endl;
+		}
+		if(i != plannedTrajectory.paths.size() - 1)
+		{
+			ltrFile << "changing direction" << std::endl;
+		}
+	}
 
     ltrFile.close();
     return true;
@@ -402,7 +444,6 @@ void loadLTR(std::string fileName, bool fromEnd)
 {
     std::ofstream mapFile("/tmp/map.vtk");
     std::ifstream ltrFile(fileName);
-    path_msgs::DirectionalPath loadTrajectory;
     std::string line;
     std::string pathFrameId;
     bool parsingMap = true;
@@ -423,6 +464,25 @@ void loadLTR(std::string fileName, bool fromEnd)
         }
         else
         {
+			if(plannedTrajectory.paths.empty())
+			{
+				path_msgs::DirectionalPath directionalPath;
+				directionalPath.header.frame_id = pathFrameId;
+				directionalPath.header.stamp = ros::Time::now();
+				directionalPath.forward = true;
+				plannedTrajectory.paths.push_back(directionalPath);
+			}
+
+			if(line.find("changing direction") != std::string::npos)
+			{
+				path_msgs::DirectionalPath directionalPath;
+				directionalPath.header.frame_id = pathFrameId;
+				directionalPath.header.stamp = ros::Time::now();
+				directionalPath.forward = !plannedTrajectory.paths.back().forward;
+				plannedTrajectory.paths.push_back(directionalPath);
+				std::getline(ltrFile, line);
+			}
+
             geometry_msgs::PoseStamped pose;
             int cursorPosition = line.find(",");
             pose.pose.position.x = std::stod(line.substr(0, cursorPosition));
@@ -444,7 +504,8 @@ void loadLTR(std::string fileName, bool fromEnd)
             previousCursorPosition = cursorPosition + 1;
             cursorPosition = line.find("\n" , previousCursorPosition);
             pose.pose.orientation.w = std::stod(line.substr(previousCursorPosition, cursorPosition));
-            plannedTrajectory.poses.push_back(pose);
+			pose.header.frame_id = pathFrameId;
+            plannedTrajectory.paths.back().poses.push_back(pose);
         }
     }
     ltrFile.close();
@@ -453,34 +514,31 @@ void loadLTR(std::string fileName, bool fromEnd)
     norlab_icp_mapper_ros::LoadMap loadMapService;
     loadMapService.request.map_file_name.data = "/tmp/map.vtk";
 
-    int positionIndex;
+    int pathIndex;
+    int poseIndex;
     if(!fromEnd)
     {
-        positionIndex = 0;
+        pathIndex = 0;
+        poseIndex = 0;
     }
     else
     {
-        positionIndex = plannedTrajectory.poses.size() - 1;
+        pathIndex = plannedTrajectory.paths.size() - 1;
+        poseIndex = plannedTrajectory.paths[pathIndex].poses.size() - 1;
     }
 
-    loadMapService.request.pose.position.x = plannedTrajectory.poses[positionIndex].pose.position.x;
-    loadMapService.request.pose.position.y = plannedTrajectory.poses[positionIndex].pose.position.y;
-    loadMapService.request.pose.position.z = plannedTrajectory.poses[positionIndex].pose.position.z;
-    loadMapService.request.pose.orientation.x = plannedTrajectory.poses[positionIndex].pose.orientation.x;
-    loadMapService.request.pose.orientation.y = plannedTrajectory.poses[positionIndex].pose.orientation.y;
-    loadMapService.request.pose.orientation.z = plannedTrajectory.poses[positionIndex].pose.orientation.z;
-    loadMapService.request.pose.orientation.w = plannedTrajectory.poses[positionIndex].pose.orientation.w;
+    loadMapService.request.pose.position.x = plannedTrajectory.paths[pathIndex].poses[poseIndex].pose.position.x;
+    loadMapService.request.pose.position.y = plannedTrajectory.paths[pathIndex].poses[poseIndex].pose.position.y;
+    loadMapService.request.pose.position.z = plannedTrajectory.paths[pathIndex].poses[poseIndex].pose.position.z;
+    loadMapService.request.pose.orientation.x = plannedTrajectory.paths[pathIndex].poses[poseIndex].pose.orientation.x;
+    loadMapService.request.pose.orientation.y = plannedTrajectory.paths[pathIndex].poses[poseIndex].pose.orientation.y;
+    loadMapService.request.pose.orientation.z = plannedTrajectory.paths[pathIndex].poses[poseIndex].pose.orientation.z;
+    loadMapService.request.pose.orientation.w = plannedTrajectory.paths[pathIndex].poses[poseIndex].pose.orientation.w;
     loadMapClient.call(loadMapService);
 
     std::remove("/tmp/map.vtk");
 
-    plannedTrajectory.header.frame_id = pathFrameId;
-    for (int i = 0; i < plannedTrajectory.poses.size(); i++)
-    {
-        plannedTrajectory.poses[i].header.frame_id = pathFrameId;
-    }
-
-    publishTrajectory(plannedTrajectoryPublisher, plannedTrajectory, pathFrameId, ros::Time::now());
+	plannedTrajectoryPublisher.publish(plannedTrajectory);
 }
 
 bool loadLTRServiceCallback(wiln::LoadMapTraj::Request& req, wiln::LoadMapTraj::Response& res)
@@ -501,10 +559,14 @@ int main(int argc, char** argv)
 	ros::NodeHandle nodeHandle;
 	ros::NodeHandle privateNodeHandle("~");
 
+	drivingForward.store(true);
+	lastDrivingDirection.store(true);
+
 	ros::Subscriber plannedTrajectorySubscriber = nodeHandle.subscribe("pose_in", 1000, plannedTrajectoryCallback);
 	ros::Subscriber realTrajectorySubscriber = nodeHandle.subscribe("pose_in", 1000, realTrajectoryCallback);
 	ros::Subscriber trajectoryResultSubscriber = nodeHandle.subscribe("follow_path/result", 1000, trajectoryResultCallback);
     ros::Subscriber icpOdomSubscriber = nodeHandle.subscribe("icp_odom", 1000, icpOdomCallback);
+    ros::Subscriber commandVelocitySubscriber = nodeHandle.subscribe("cmd_vel", 1000, commandVelocityCallback);
 
 	plannedTrajectoryPublisher = nodeHandle.advertise<path_msgs::PathSequence>("planned_trajectory", 1000, true);
 	realTrajectoryPublisher = nodeHandle.advertise<path_msgs::PathSequence>("real_trajectory", 1000, true);
