@@ -205,7 +205,13 @@ path_msgs::PathSequence smoothTrajectoryLowPass(const path_msgs::PathSequence& r
 			smoothTrajectory.paths[i].poses[j].pose.position.z = windowNeighborSumZ / ((2 * lowPassFilterWindowSize) + 1);
 		}
 	}
-    return smoothTrajectory;
+	for(int i = 0; i < lowPassFilterWindowSize; ++i)
+	{
+		smoothTrajectory.paths.front().poses.erase(smoothTrajectory.paths.front().poses.begin());
+		smoothTrajectory.paths.back().poses.erase(smoothTrajectory.paths.back().poses.end() - 1);
+	}
+	
+	return smoothTrajectory;
 }
 
 bool stopRecordingServiceCallback(std_srvs::Empty::Request& req, std_srvs::Empty::Response& res)
@@ -358,13 +364,29 @@ bool playLoopTrajectoryServiceCallback(wiln::PlayLoop::Request& req, wiln::PlayL
 		return false;
 	}
 
-	path_msgs::PathSequence cutTrajectory = plannedTrajectory;
-	int poseIndex = cutTrajectory.paths.back().poses.size() - 1;
-	while(poseIndex >= 1 && computeEuclideanDistanceBetweenPoses(cutTrajectory.paths.back().poses[poseIndex - 1].pose, cutTrajectory.paths.front().poses.front().pose) <
-							computeEuclideanDistanceBetweenPoses(cutTrajectory.paths.back().poses[poseIndex].pose, cutTrajectory.paths.front().poses.front().pose))
+	path_msgs::PathSequence cutLoopTrajectory = plannedTrajectory;
+	int poseIndex = cutLoopTrajectory.paths.back().poses.size() - 1;
+	while(poseIndex >= 1 && computeEuclideanDistanceBetweenPoses(cutLoopTrajectory.paths.back().poses[poseIndex - 1].pose, cutLoopTrajectory.paths.front().poses.front().pose) <
+							computeEuclideanDistanceBetweenPoses(cutLoopTrajectory.paths.back().poses[poseIndex].pose, cutLoopTrajectory.paths.front().poses.front().pose))
 	{
-		cutTrajectory.paths.back().poses.erase(cutTrajectory.paths.back().poses.begin() + poseIndex);
+		cutLoopTrajectory.paths.back().poses.erase(cutLoopTrajectory.paths.back().poses.begin() + poseIndex);
 		--poseIndex;
+	}
+	path_msgs::PathSequence firstLoopTrajectory = cutLoopTrajectory;
+	while(firstLoopTrajectory.paths.front().poses.size() > 0 && computeEuclideanDistanceBetweenPoses(cutLoopTrajectory.paths.back().poses.back().pose, firstLoopTrajectory.paths.back().poses.back().pose) < 1.0)
+	{
+		firstLoopTrajectory.paths.front().poses.erase(firstLoopTrajectory.paths.back().poses.end()-1);
+	}
+	path_msgs::PathSequence lastLoopTrajectory = cutLoopTrajectory;
+	while(lastLoopTrajectory.paths.front().poses.size() > 0 && computeEuclideanDistanceBetweenPoses(cutLoopTrajectory.paths.front().poses.front().pose, lastLoopTrajectory.paths.front().poses.front().pose) < 1.0)
+	{
+		lastLoopTrajectory.paths.front().poses.erase(lastLoopTrajectory.paths.front().poses.begin());
+	}
+	path_msgs::PathSequence middleLoopTrajectory = firstLoopTrajectory;
+	while(middleLoopTrajectory.paths.front().poses.size() > 0 && computeEuclideanDistanceBetweenPoses(cutLoopTrajectory.paths.front().poses.front().pose, middleLoopTrajectory.paths.front().poses.front().pose) < 1.0)
+	{
+		middleLoopTrajectory.paths.front().poses.erase(middleLoopTrajectory.paths.front().poses.begin());
+		
 	}
 
 	playing = true;
@@ -379,11 +401,50 @@ bool playLoopTrajectoryServiceCallback(wiln::PlayLoop::Request& req, wiln::PlayL
 	goal.follower_options.velocity = trajectorySpeed;
 	goal.path.header.frame_id = plannedTrajectory.paths.front().poses.front().header.frame_id;
 	goal.path.header.stamp = ros::Time::now();
-	for(int i = 0; i < req.nbLoops; ++i)
+	for(int i = 0; i < firstLoopTrajectory.paths.size(); ++i)
 	{
-		for(int j = 0; j < cutTrajectory.paths.size(); ++j)
+		if(i != 0 && firstLoopTrajectory.paths[i].forward == goal.path.paths.back().forward)
 		{
-			goal.path.paths.push_back(cutTrajectory.paths[j]);
+			for(int j = 0; j < firstLoopTrajectory.paths[i].poses.size(); ++j)
+			{
+				goal.path.paths.back().poses.push_back(firstLoopTrajectory.paths[i].poses[j]);
+			}
+		}
+		else
+		{
+			goal.path.paths.push_back(firstLoopTrajectory.paths[i]);
+		}
+	}
+	for(int i = 1; i < req.nbLoops-1; ++i)
+	{
+		for(int j = 0; j < middleLoopTrajectory.paths.size(); ++j)
+		{
+			if(middleLoopTrajectory.paths[j].forward == goal.path.paths.back().forward)
+			{
+				for(int k = 0; k < middleLoopTrajectory.paths[j].poses.size(); ++k)
+				{
+					goal.path.paths.back().poses.push_back(middleLoopTrajectory.paths[j].poses[k]);
+				}
+			}
+			else
+			{
+				goal.path.paths.push_back(middleLoopTrajectory.paths[j]);
+			}
+		}
+	}
+
+	for(int i = 0; i < lastLoopTrajectory.paths.size(); ++i)
+	{
+		if(lastLoopTrajectory.paths[i].forward == goal.path.paths.back().forward)
+		{
+			for(int j = 0; j < lastLoopTrajectory.paths[i].poses.size(); ++j)
+			{
+				goal.path.paths.back().poses.push_back(lastLoopTrajectory.paths[i].poses[j]);
+			}
+		}
+		else
+		{
+			goal.path.paths.push_back(lastLoopTrajectory.paths[i]);
 		}
 	}
 	simpleActionClient->sendGoal(goal);
