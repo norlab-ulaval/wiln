@@ -45,6 +45,8 @@ First, install the dependencies. For example, from your workspace root directory
     cd  && cd catkin_ws/src
     git clone https://github.com/cogsys-tuebingen/cslibs_path_planning
     git clone https://github.com/cogsys-tuebingen/cslibs_navigation_utilities
+    sudo apt install libalglib-dev
+    git clone https://github.com/cogsys-tuebingen/gerona.git
     cd ..
 
     rosdep install --from-paths -i -r -y src
