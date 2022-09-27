@@ -313,19 +313,19 @@ private:
     {
         if(playing)
         {
-            RCLCPP_WARN("Trajectory is already being played.");
+            RCLCPP_WARN(this->get_logger(), "Trajectory is already being played.");
             return false;
         }
 
         if(recording)
         {
-            RCLCPP_WARN("Cannot play trajectory while recording.");
+            RCLCPP_WARN(this->get_logger(), "Cannot play trajectory while recording.");
             return false;
         }
 
         if(plannedTrajectory.paths.empty())
         {
-            RCLCPP_WARN("Cannot play an empty trajectory.");
+            RCLCPP_WARN(this->get_logger(), "Cannot play an empty trajectory.");
             return false;
         }
 
