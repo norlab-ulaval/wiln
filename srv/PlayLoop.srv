@@ -1,2 +1,2 @@
-uint32 nbLoops
+std_msgs/Uint32 nb_loops
 ---

@@ -1,2 +1,2 @@
-string file_name
+std_msgs/String file_name
 ---

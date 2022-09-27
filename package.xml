@@ -1,5 +1,6 @@
 <?xml version="1.0"?>
-<package format="2">
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
   <name>wiln</name>
   <version>0.0.2</version>
   <description>A node that creates a trajectory and sends it to the controller, with other parameters.</description>
@@ -27,63 +28,25 @@
   <!-- Example: -->
   <author email="simon-pierre.deschenes.1@ulaval.ca">Simon-Pierre Deschênes</author>
 
+  <depend>rclcpp</depend>
+  <depend>std_msgs</depend>
+  <depend>sensor_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>std_srvs</depend>
+  <depend>tf2_ros</depend>
+  <depend>tf2</depend>
+  <depend>norlab_icp_mapper_ros</depend>
 
-  <!-- The *depend tags are used to specify dependencies -->
-  <!-- Dependencies can be catkin packages or system dependencies -->
-  <!-- Examples: -->
-  <!-- Use depend as a shortcut for packages that are both build and exec dependencies -->
-  <!--   <depend>roscpp</depend> -->
-  <!--   Note that this is equivalent to the following: -->
-  <!--   <build_depend>roscpp</build_depend> -->
-  <!--   <exec_depend>roscpp</exec_depend> -->
-  <!-- Use build_depend for packages you need at compile time: -->
-     <build_depend>message_generation</build_depend>
-  <!-- Use build_export_depend for packages you need in order to build against this package: -->
-  <!--   <build_export_depend>message_generation</build_export_depend> -->
-  <!-- Use buildtool_depend for build tool packages: -->
-  <!--   <buildtool_depend>catkin</buildtool_depend> -->
-  <!-- Use exec_depend for packages you need at runtime: -->
-     <exec_depend>message_runtime</exec_depend>
-  <!-- Use test_depend for packages you need only for testing: -->
-  <!--   <test_depend>gtest</test_depend> -->
-  <!-- Use doc_depend for packages you need only for building documentation: -->
-  <!--   <doc_depend>doxygen</doc_depend> -->
-  <buildtool_depend>catkin</buildtool_depend>
+  <build_depend>rosidl_default_generators</build_depend>
 
-  <build_depend>roscpp</build_depend>
-  <build_depend>geometry_msgs</build_depend>
-  <build_depend>path_msgs</build_depend>
-  <build_depend>std_srvs</build_depend>
-  <build_depend>nav_msgs</build_depend>
-  <build_depend>actionlib</build_depend>
-  <build_depend>tf2</build_depend>
-  <build_depend>tf2_geometry_msgs</build_depend>
-  <build_depend>norlab_icp_mapper_ros</build_depend>
-  
-  <build_export_depend>roscpp</build_export_depend>
-  <build_export_depend>geometry_msgs</build_export_depend>
-  <build_export_depend>path_msgs</build_export_depend>
-  <build_export_depend>std_srvs</build_export_depend>
-  <build_export_depend>nav_msgs</build_export_depend>
-  <build_export_depend>actionlib</build_export_depend>
-  <build_export_depend>tf2</build_export_depend>
-  <build_export_depend>tf2_geometry_msgs</build_export_depend>
-  <build_export_depend>norlab_icp_mapper_ros</build_export_depend>
-  
-  <exec_depend>roscpp</exec_depend>
-  <exec_depend>geometry_msgs</exec_depend>
-  <exec_depend>path_msgs</exec_depend>
-  <exec_depend>std_srvs</exec_depend>
-  <exec_depend>nav_msgs</exec_depend>
-  <exec_depend>actionlib</exec_depend>
-  <exec_depend>tf2</exec_depend>
-  <exec_depend>tf2_geometry_msgs</exec_depend>
-  <exec_depend>norlab_icp_mapper_ros</exec_depend>
+  <exec_depend>rosidl_default_runtime</exec_depend>
 
+  <member_of_group>rosidl_interface_packages</member_of_group>
 
   <!-- The export tag contains other, unspecified, tags -->
   <export>
     <!-- Other tools can request additional information be placed here -->
+    <build_type>ament_cmake</build_type>
 
   </export>
 </package>
