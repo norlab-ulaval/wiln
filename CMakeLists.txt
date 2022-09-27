@@ -12,10 +12,12 @@ find_package(nav_msgs REQUIRED)
 find_package(norlab_icp_mapper_ros REQUIRED)
 
 rosidl_generate_interfaces(${PROJECT_NAME}
+        "msg/DirectionalPath.msg"
+        "msg/PathSequence.msg"
         "srv/LoadMapTraj.srv"
         "srv/PlayLoop.srv"
         "srv/SaveMapTraj.srv"
-        DEPENDENCIES std_msgs
+        DEPENDENCIES std_msgs geometry_msgs
         )
 
 include_directories(
@@ -28,7 +30,7 @@ include_directories(
   ${catkin_INCLUDE_DIRS}
 )
 
-add_executable(wiln_node src/main.cpp)
+add_executable(wiln_node src/wiln_node.cpp)
 
 ament_target_dependencies(wiln_node
         rclcpp
