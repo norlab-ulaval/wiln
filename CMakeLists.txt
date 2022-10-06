@@ -8,26 +8,22 @@ find_package(std_srvs REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(tf2_geometry_msgs REQUIRED)
 find_package(tf2 REQUIRED)
+find_package(rclcpp_action REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(norlab_icp_mapper_ros REQUIRED)
+find_package(norlab_controllers_msgs REQUIRED)
 
 rosidl_generate_interfaces(${PROJECT_NAME}
-        "msg/DirectionalPath.msg"
-        "msg/PathSequence.msg"
+#        "msg/DirectionalPath.msg"
+#        "msg/PathSequence.msg"
         "srv/LoadMapTraj.srv"
         "srv/PlayLoop.srv"
         "srv/SaveMapTraj.srv"
-        DEPENDENCIES std_msgs geometry_msgs
+        DEPENDENCIES std_msgs geometry_msgs norlab_controllers_msgs
         )
 
 include_directories(
         ${wiln_INCLUDE_DIRS}
-)
-
-
-include_directories(
-# include
-  ${catkin_INCLUDE_DIRS}
 )
 
 add_executable(wiln_node src/wiln_node.cpp)
@@ -40,7 +36,9 @@ ament_target_dependencies(wiln_node
         std_srvs
         tf2_ros
         tf2
+        rclcpp_action
         norlab_icp_mapper_ros
+        norlab_controllers_msgs
         )
 
 target_link_libraries(wiln_node
