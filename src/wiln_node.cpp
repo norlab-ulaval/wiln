@@ -27,15 +27,6 @@ public:
     {
         using FollowPath = norlab_controllers_msgs::action::FollowPath;
 
-//        client_ptr_ = rclcpp_action::create_client<norlab_controllers_msgs::action::FollowPath>()
-        this->client_ptr_ = rclcpp_action::create_client<FollowPath>(
-                this->get_node_base_interface(),
-                this->get_node_graph_interface(),
-                this->get_node_logging_interface(),
-                this->get_node_waitables_interface(),
-                "follow_path"
-                );
-
         // TODO: Create service clients to call enable_mapping, disable_mapping, save_map and load_map
 
         startRecordingService = this->create_service<std_srvs::srv::Empty>("start_recording",
@@ -71,6 +62,8 @@ public:
         saveMapClient = this->create_client<norlab_icp_mapper_ros::srv::SaveMap>("save_map");
         loadMapClient = this->create_client<norlab_icp_mapper_ros::srv::LoadMap>("load_map");
 
+        followPathClient = rclcpp_action::create_client<norlab_controllers_msgs::action::FollowPath>(this, "follow_path");
+
         odomSubscription = this->create_subscription<nav_msgs::msg::Odometry>("odom_in", 1000,
                                                                               std::bind(&WilnNode::odomCallback, this,
                                                                                         std::placeholders::_1));
@@ -91,14 +84,13 @@ private:
     geometry_msgs::msg::Pose robotPose;
     std::mutex robotPoseLock;
 
-
     rclcpp::Service<std_srvs::srv::Empty>::SharedPtr  startRecordingService;
     rclcpp::Service<std_srvs::srv::Empty>::SharedPtr  stopRecordingService;
     rclcpp::Service<wiln::srv::SaveMapTraj>::SharedPtr  saveMapTrajService;
     rclcpp::Service<wiln::srv::LoadMapTraj>::SharedPtr loadMapTrajService;
     rclcpp::Service<wiln::srv::LoadMapTraj>::SharedPtr loadMapTrajFromEndService;
     rclcpp::Service<wiln::srv::PlayLoop>::SharedPtr  playLoopService;
-    rclcpp::Service<wiln::srv::PlayLoop>::SharedPtr  playLineService;
+    rclcpp::Service<std_srvs::srv::Empty>::SharedPtr  playLineService;
     rclcpp::Service<std_srvs::srv::Empty>::SharedPtr  cancelTrajectoryService;
     rclcpp::Service<std_srvs::srv::Empty>::SharedPtr  smoothTrajectoryService;
 
@@ -115,20 +107,21 @@ private:
 
     float trajectorySpeed;
     int lowPassFilterWindowSize;
-    const std::map<int8_t, std::string> FOLLOW_PATH_RESULTS = {
-            { 0u, "RESULT_STATUS_STOPPED_BY_SUPERVISOR" },
-            { 1u, "RESULT_STATUS_UNKNOWN" },
-            { 2u, "RESULT_STATUS_OBSTACLE" },
-            { 3u, "RESULT_STATUS_SUCCESS" },
-            { 4u, "RESULT_STATUS_ABORTED" },
-            { 5u, "RESULT_STATUS_INTERNAL_ERROR" },
-            { 6u, "RESULT_STATUS_SLAM_FAIL" },
-            { 7u, "RESULT_STATUS_TF_FAIL" },
-            { 8u, "RESULT_STATUS_PATH_LOST" },
-            { 9u, "RESULT_STATUS_TIMEOUT" },
-    };
 
-    rclcpp_action::Client<norlab_controllers_msgs::action::FollowPath>::SharedPtr client_ptr_;
+    //    const std::map<int8_t, std::string> FOLLOW_PATH_RESULTS = {
+//            { 0u, "RESULT_STATUS_STOPPED_BY_SUPERVISOR" },
+//            { 1u, "RESULT_STATUS_UNKNOWN" },
+//            { 2u, "RESULT_STATUS_OBSTACLE" },
+//            { 3u, "RESULT_STATUS_SUCCESS" },
+//            { 4u, "RESULT_STATUS_ABORTED" },
+//            { 5u, "RESULT_STATUS_INTERNAL_ERROR" },
+//            { 6u, "RESULT_STATUS_SLAM_FAIL" },
+//            { 7u, "RESULT_STATUS_TF_FAIL" },
+//            { 8u, "RESULT_STATUS_PATH_LOST" },
+//            { 9u, "RESULT_STATUS_TIMEOUT" },
+//    };
+
+    rclcpp_action::Client<norlab_controllers_msgs::action::FollowPath>::SharedPtr followPathClient;
 
     rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odomSubscription;
     rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr commandedVelocitySubscription;
@@ -365,7 +358,7 @@ private:
         return std::atan2(dy, dx);
     }
 
-    void playLineServiceCallback(const std::shared_ptr<std_srvs::srv::Empty::Request> req, std::shared_ptr<std_srvs::srv::Empty> res)
+    void playLineTrajectoryServiceCallback(const std::shared_ptr<std_srvs::srv::Empty::Request> req, std::shared_ptr<std_srvs::srv::Empty::Response> res)
     {
         if(playing)
         {
@@ -423,19 +416,20 @@ private:
         auto enableMappingRequest = std::make_shared<std_srvs::srv::Empty::Request>();
         enableMappingClient->async_send_request(enableMappingRequest);
 
-        // TODO: properly write action call
-        norlab_controllers_msgs::msg::FollowPathGoal goal;
-        goal.follower_options.init_mode = norlab_controllers_msgs::msg::FollowerOptions::INIT_MODE_CONTINUE;
-        goal.follower_options.velocity = trajectorySpeed;
-        goal.path.header.frame_id = plannedTrajectory.paths.front().poses.front().header.frame_id;
-        goal.path.header.stamp = this->now();
+        // TODO: validate action call
+        auto goal_msg = norlab_controllers_msgs::action::FollowPath::Goal();
+        goal_msg.follower_options.init_mode.data = 1; // init_mode = 1 : continue
+        goal_msg.follower_options.velocity.data = trajectorySpeed;
+        goal_msg.path.header.frame_id = plannedTrajectory.paths.front().poses.front().header.frame_id;
+        goal_msg.path.header.stamp = this->now();
+
         for(int i = 0; i < plannedTrajectory.paths.size(); ++i)
         {
-            goal.path.paths.push_back(plannedTrajectory.paths[i]);
+            goal_msg.path.paths.push_back(plannedTrajectory.paths[i]);
         }
-        simpleActionClient->sendGoal(goal);
+        followPathClient->async_send_goal(goal_msg);
 
-        return true;
+        return;
     }
 
     void saveLTRServiceCallback(const std::shared_ptr<wiln::srv::SaveMapTraj::Request> req, std::shared_ptr<wiln::srv::SaveMapTraj::Response> res)
@@ -636,64 +630,63 @@ private:
         auto disableMappingRequest = std::make_shared<std_srvs::srv::Empty::Request>();
         disableMappingClient->async_send_request(disableMappingRequest);
 
-        // TODO: Properly set up action call here
-        norlab_controllers_msgs::action::FollowPathGoal goal;
-        goal.follower_options.init_mode = norlab_controllers_msgs:msg::FollowerOptions::INIT_MODE_CONTINUE;
-        goal.follower_options.velocity = trajectorySpeed;
-        goal.path.header.frame_id = plannedTrajectory.paths.front().poses.front().header.frame_id;
-        goal.path.header.stamp = this->now();
+        // TODO: validate action call
+        auto goal_msg = norlab_controllers_msgs::action::FollowPath::Goal();
+        goal_msg.follower_options.init_mode.data = 1; // init_mode = 1 : continue
+        goal_msg.follower_options.velocity.data = trajectorySpeed;
+        goal_msg.path.header.frame_id = plannedTrajectory.paths.front().poses.front().header.frame_id;
+        goal_msg.path.header.stamp = this->now();
         for(int i = 0; i < firstLoopTrajectory.paths.size(); ++i)
         {
-            if(i != 0 && firstLoopTrajectory.paths[i].forward == goal.path.paths.back().forward)
+            if(i != 0 && firstLoopTrajectory.paths[i].forward == goal_msg.path.paths.back().forward)
             {
                 for(int j = 0; j < firstLoopTrajectory.paths[i].poses.size(); ++j)
                 {
-                    goal.path.paths.back().poses.push_back(firstLoopTrajectory.paths[i].poses[j]);
+                    goal_msg.path.paths.back().poses.push_back(firstLoopTrajectory.paths[i].poses[j]);
                 }
             }
             else
             {
-                goal.path.paths.push_back(firstLoopTrajectory.paths[i]);
+                goal_msg.path.paths.push_back(firstLoopTrajectory.paths[i]);
             }
         }
         for(int i = 1; i < req->nb_loops.data-1; ++i)
         {
             for(int j = 0; j < middleLoopTrajectory.paths.size(); ++j)
             {
-                if(middleLoopTrajectory.paths[j].forward == goal.path.paths.back().forward)
+                if(middleLoopTrajectory.paths[j].forward == goal_msg.path.paths.back().forward)
                 {
                     for(int k = 0; k < middleLoopTrajectory.paths[j].poses.size(); ++k)
                     {
-                        goal.path.paths.back().poses.push_back(middleLoopTrajectory.paths[j].poses[k]);
+                        goal_msg.path.paths.back().poses.push_back(middleLoopTrajectory.paths[j].poses[k]);
                     }
                 }
                 else
                 {
-                    goal.path.paths.push_back(middleLoopTrajectory.paths[j]);
+                    goal_msg.path.paths.push_back(middleLoopTrajectory.paths[j]);
                 }
             }
         }
 
         for(int i = 0; i < lastLoopTrajectory.paths.size(); ++i)
         {
-            if(lastLoopTrajectory.paths[i].forward == goal.path.paths.back().forward)
+            if(lastLoopTrajectory.paths[i].forward == goal_msg.path.paths.back().forward)
             {
                 for(int j = 0; j < lastLoopTrajectory.paths[i].poses.size(); ++j)
                 {
-                    goal.path.paths.back().poses.push_back(lastLoopTrajectory.paths[i].poses[j]);
+                    goal_msg.path.paths.back().poses.push_back(lastLoopTrajectory.paths[i].poses[j]);
                 }
             }
             else
             {
-                goal.path.paths.push_back(lastLoopTrajectory.paths[i]);
+                goal_msg.path.paths.push_back(lastLoopTrajectory.paths[i]);
             }
         }
-        simpleActionClient->sendGoal(goal);
-
-        return true;
+        followPathClient->async_send_goal(goal_msg);
+        return;
     }
 
-    void cancelTrajectoryServiceCallback(const std::shared_ptr<std_srvs::srv::Empty::Request req, std::shared_ptr<std_srvs::srv::Empty::Response res)
+    void cancelTrajectoryServiceCallback(const std::shared_ptr<std_srvs::srv::Empty::Request> req, std::shared_ptr<std_srvs::srv::Empty::Response> res)
     {
         if(!playing)
         {
@@ -703,10 +696,9 @@ private:
 
         playing = false;
 
-        // TODO: properly set up action call here
-        simpleActionClient->cancelAllGoals();
-
-        return true;
+        // TODO: validate action call here
+        followPathClient->async_cancel_all_goals();
+        return;
     }
 
 };
