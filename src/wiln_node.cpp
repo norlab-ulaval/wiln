@@ -38,9 +38,38 @@ public:
 
         // TODO: Create service clients to call enable_mapping, disable_mapping, save_map and load_map
 
-        loadMapTrajService = this->create_service<wiln::srv::LoadMapTraj>("load_map_traj",
+        startRecordingService = this->create_service<std_srvs::srv::Empty>("start_recording",
+                                                                             std::bind(&WilnNode::startRecordingServiceCallback, this, std::placeholders::_1,
+                                                                                       std::placeholders::_2));
+        stopRecordingService = this->create_service<std_srvs::srv::Empty>("stop_recording",
+                                                                             std::bind(&WilnNode::stopRecordingServiceCallback, this, std::placeholders::_1,
+                                                                                       std::placeholders::_2));
+        saveMapTrajService = this->create_service<wiln::srv::SaveMapTraj>("save_map_traj",
                                                                           std::bind(&WilnNode::saveLTRServiceCallback, this, std::placeholders::_1,
                                                                                     std::placeholders::_2));
+        loadMapTrajService = this->create_service<wiln::srv::LoadMapTraj>("load_map_traj",
+                                                                          std::bind(&WilnNode::loadLTRServiceCallback, this, std::placeholders::_1,
+                                                                                    std::placeholders::_2));
+        loadMapTrajFromEndService = this->create_service<wiln::srv::LoadMapTraj>("load_map_traj_from_end",
+                                                                          std::bind(&WilnNode::loadLTRFromEndServiceCallback, this, std::placeholders::_1,
+                                                                                    std::placeholders::_2));
+        playLoopService = this->create_service<wiln::srv::PlayLoop>("play_loop",
+                                                                    std::bind(&WilnNode::playLoopTrajectoryServiceCallback, this, std::placeholders::_1,
+                                                                              std::placeholders::_2));
+        playLineService = this->create_service<std_srvs::srv::Empty>("play_line",
+                                                                          std::bind(&WilnNode::playLineTrajectoryServiceCallback, this, std::placeholders::_1,
+                                                                                    std::placeholders::_2));
+        cancelTrajectoryService = this->create_service<std_srvs::srv::Empty>("cancel_trajectory",
+                                                                     std::bind(&WilnNode::cancelTrajectoryServiceCallback, this, std::placeholders::_1,
+                                                                               std::placeholders::_2));
+        smoothTrajectoryService = this->create_service<std_srvs::srv::Empty>("smooth_trajectory",
+                                                                     std::bind(&WilnNode::smoothTrajectoryServiceCallback, this, std::placeholders::_1,
+                                                                               std::placeholders::_2));
+
+        enableMappingClient = this->create_client<std_srvs::srv::Empty>("enable_mapping");
+        disableMappingClient = this->create_client<std_srvs::srv::Empty>("disable_mapping");
+        saveMapClient = this->create_client<norlab_icp_mapper_ros::srv::SaveMap>("save_map");
+        loadMapClient = this->create_client<norlab_icp_mapper_ros::srv::LoadMap>("load_map");
 
         odomSubscription = this->create_subscription<nav_msgs::msg::Odometry>("odom_in", 1000,
                                                                               std::bind(&WilnNode::odomCallback, this,
@@ -61,13 +90,22 @@ private:
     norlab_controllers_msgs::msg::PathSequence realTrajectory;
     geometry_msgs::msg::Pose robotPose;
     std::mutex robotPoseLock;
-    rclcpp::Service<wiln::srv::LoadMapTraj> loadMapTrajService;
-    rclcpp::Service<wiln::srv::SaveMapTraj> saveMapTrajService;
-    rclcpp::Service<wiln::srv::PlayLoop> playLoopService;
-    rclcpp::Client<norlab_icp_mapper_ros::srv::LoadMap> enableMappingClient;
-    rclcpp::Client<norlab_icp_mapper_ros::srv::SaveMap> disableMappingClient;
-    rclcpp::Client<std_srvs::srv::Empty> saveMapClient;
-    rclcpp::Client<std_srvs::srv::Empty> loadMapClient;
+
+
+    rclcpp::Service<std_srvs::srv::Empty>::SharedPtr  startRecordingService;
+    rclcpp::Service<std_srvs::srv::Empty>::SharedPtr  stopRecordingService;
+    rclcpp::Service<wiln::srv::SaveMapTraj>::SharedPtr  saveMapTrajService;
+    rclcpp::Service<wiln::srv::LoadMapTraj>::SharedPtr loadMapTrajService;
+    rclcpp::Service<wiln::srv::LoadMapTraj>::SharedPtr loadMapTrajFromEndService;
+    rclcpp::Service<wiln::srv::PlayLoop>::SharedPtr  playLoopService;
+    rclcpp::Service<wiln::srv::PlayLoop>::SharedPtr  playLineService;
+    rclcpp::Service<std_srvs::srv::Empty>::SharedPtr  cancelTrajectoryService;
+    rclcpp::Service<std_srvs::srv::Empty>::SharedPtr  smoothTrajectoryService;
+
+    rclcpp::Client<std_srvs::srv::Empty>::SharedPtr enableMappingClient;
+    rclcpp::Client<std_srvs::srv::Empty>::SharedPtr disableMappingClient;
+    rclcpp::Client<norlab_icp_mapper_ros::srv::SaveMap>::SharedPtr saveMapClient;
+    rclcpp::Client<norlab_icp_mapper_ros::srv::LoadMap>::SharedPtr loadMapClient;
     std::atomic_bool lastDrivingDirection;
 
     const int FRAME_ID_START_POSITION = 11; // length of string : "frame_id : "
@@ -209,26 +247,25 @@ private:
         }
     }
 
-    bool startRecordingServiceCallback(std_srvs::srv::Empty::Request& req, std_srvs::srv::Empty::Response& res)
+    void startRecordingServiceCallback(const std::shared_ptr<std_srvs::srv::Empty::Request> req, std::shared_ptr<std_srvs::srv::Empty::Response> res)
     {
         if(recording)
         {
             RCLCPP_WARN(this->get_logger(), "Trajectory is already being recorded.");
-            return false;
+            return;
         }
 
         if(playing)
         {
             RCLCPP_WARN(this->get_logger(), "Cannot start recording, trajectory is currently being played.");
-            return false;
+            return;
         }
 
         recording = true;
 
-        std_srvs::srv::Empty enableMappingService = std_srvs::srv::Empty();
-        enableMappingClient.call(enableMappingService);
-
-        return true;
+        auto enableMappingRequest = std::make_shared<std_srvs::srv::Empty::Request>();
+        enableMappingClient->async_send_request(enableMappingRequest);
+        return;
     }
 
     norlab_controllers_msgs::msg::PathSequence smoothTrajectoryLowPass(const norlab_controllers_msgs::msg::PathSequence& roughTrajectory)
@@ -262,28 +299,28 @@ private:
         return smoothTrajectory;
     }
 
-    bool stopRecordingServiceCallback(std_srvs::srv::Empty::Request& req, std_srvs::srv::Empty::Response& res)
+    void stopRecordingServiceCallback(const std::shared_ptr<std_srvs::srv::Empty::Request> req, std::shared_ptr<std_srvs::srv::Empty::Response> res)
     {
         if(!recording)
         {
             RCLCPP_WARN(this->get_logger(), "Trajectory is already not being recorded.");
-            return false;
+            return;
         }
 
         recording = false;
-        return true;
+        return;
     }
 
-    bool clearTrajectoryServiceCallback(std_srvs::srv::Empty::Request& req, std_srvs::srv::Empty::Response& res)
+    void clearTrajectoryServiceCallback(const std::shared_ptr<std_srvs::srv::Empty::Request> req, std::shared_ptr<std_srvs::srv::Empty::Response> res)
     {
         plannedTrajectory.paths.clear();
-        return true;
+        return;
     }
 
-    bool smoothTrajectoryServiceCallback(std_srvs::srv::Empty::Request& req, std_srvs::srv::Empty::Response& res)
+    void smoothTrajectoryServiceCallback(const std::shared_ptr<std_srvs::srv::Empty::Request> req, std::shared_ptr<std_srvs::srv::Empty::Response> res)
     {
         plannedTrajectory = smoothTrajectoryLowPass(plannedTrajectory);
-        return true;
+        return;
     }
 
     double computeEuclideanDistanceBetweenPoses(const geometry_msgs::msg::Pose& firstPose, const geometry_msgs::msg::Pose& secondPose)
@@ -309,7 +346,7 @@ private:
                                                                                                                                                           quaternion.z);
     }
 
-    double computeTrajectoryYaw(const wiln::msg::PathSequence& trajectory, const geometry_msgs::msg::Pose& pose)
+    double computeTrajectoryYaw(const norlab_controllers_msgs::msg::PathSequence& trajectory, const geometry_msgs::msg::Pose& pose)
     {
         double dx = 0;
         double dy = 0;
@@ -328,24 +365,24 @@ private:
         return std::atan2(dy, dx);
     }
 
-    bool playTrajectoryServiceCallback(std_srvs::srv::Empty::Request& req, std_srvs::srv::Empty::Response& res)
+    void playLineServiceCallback(const std::shared_ptr<std_srvs::srv::Empty::Request> req, std::shared_ptr<std_srvs::srv::Empty> res)
     {
         if(playing)
         {
             RCLCPP_WARN(this->get_logger(), "Trajectory is already being played.");
-            return false;
+            return;
         }
 
         if(recording)
         {
             RCLCPP_WARN(this->get_logger(), "Cannot play trajectory while recording.");
-            return false;
+            return;
         }
 
         if(plannedTrajectory.paths.empty())
         {
             RCLCPP_WARN(this->get_logger(), "Cannot play an empty trajectory.");
-            return false;
+            return;
         }
 
         robotPoseLock.lock();
@@ -383,11 +420,10 @@ private:
 
         realTrajectory.paths.clear();
 
-        std_srvs::srv::Empty disableMappingService = std_srvs::srv::Empty();
-//        disableMappingClient.call(disableMappingService);
-//        disableMappingClient->;
-        // TODO: Validate conversion above
+        auto enableMappingRequest = std::make_shared<std_srvs::srv::Empty::Request>();
+        enableMappingClient->async_send_request(enableMappingRequest);
 
+        // TODO: properly write action call
         norlab_controllers_msgs::msg::FollowPathGoal goal;
         goal.follower_options.init_mode = norlab_controllers_msgs::msg::FollowerOptions::INIT_MODE_CONTINUE;
         goal.follower_options.velocity = trajectorySpeed;
@@ -404,13 +440,12 @@ private:
 
     void saveLTRServiceCallback(const std::shared_ptr<wiln::srv::SaveMapTraj::Request> req, std::shared_ptr<wiln::srv::SaveMapTraj::Response> res)
     {
-        norlab_icp_mapper_ros::srv::SaveMap saveMapService;
-//        std::string mapName = req.file_name.substr(0, req.file_name.rfind('.')) + ".vtk";
+        auto saveMapRequest = std::make_shared<norlab_icp_mapper_ros::srv::SaveMap::Request>();
         std::string mapName = req->file_name.data.substr(0, req->file_name.data.rfind('.')) + ".vtk";
-        saveMapService.request.map_file_name.data = mapName;
-        saveMapClient.call(saveMapService);
-        std::rename(mapName.c_str(), req.file_name.c_str());
-        std::ofstream ltrFile(req.file_name, std::ios::app);
+        saveMapRequest->map_file_name.data = mapName;
+        saveMapClient->async_send_request(saveMapRequest);
+        std::rename(mapName.c_str(), req->file_name.data.c_str());
+        std::ofstream ltrFile(req->file_name.data, std::ios::app);
 
         ltrFile << TRAJECTORY_DELIMITER << std::endl;
         ltrFile << "frame_id : " << plannedTrajectory.paths.front().poses.front().header.frame_id << std::endl;
@@ -436,295 +471,251 @@ private:
         ltrFile.close();
     }
 
-};
-
-
-
-bool playLoopTrajectoryServiceCallback(wiln::PlayLoop::Request& req, wiln::PlayLoop::Response& res)
-{
-	if(playing)
-	{
-		ROS_WARN("Trajectory is already being played.");
-		return false;
-	}
-
-	if(recording)
-	{
-		ROS_WARN("Cannot play trajectory while recording.");
-		return false;
-	}
-
-	if(plannedTrajectory.paths.empty())
-	{
-		ROS_WARN("Cannot play an empty trajectory.");
-		return false;
-	}
-
-	path_msgs::PathSequence cutLoopTrajectory = plannedTrajectory;
-	int poseIndex = cutLoopTrajectory.paths.back().poses.size() - 1;
-	while(poseIndex >= 1 && computeEuclideanDistanceBetweenPoses(cutLoopTrajectory.paths.back().poses[poseIndex - 1].pose, cutLoopTrajectory.paths.front().poses.front().pose) <
-							computeEuclideanDistanceBetweenPoses(cutLoopTrajectory.paths.back().poses[poseIndex].pose, cutLoopTrajectory.paths.front().poses.front().pose))
-	{
-		cutLoopTrajectory.paths.back().poses.erase(cutLoopTrajectory.paths.back().poses.begin() + poseIndex);
-		--poseIndex;
-	}
-	path_msgs::PathSequence firstLoopTrajectory = cutLoopTrajectory;
-	while(firstLoopTrajectory.paths.front().poses.size() > 0 && computeEuclideanDistanceBetweenPoses(cutLoopTrajectory.paths.back().poses.back().pose, firstLoopTrajectory.paths.back().poses.back().pose) < 1.0)
-	{
-		firstLoopTrajectory.paths.front().poses.erase(firstLoopTrajectory.paths.back().poses.end()-1);
-	}
-	path_msgs::PathSequence lastLoopTrajectory = cutLoopTrajectory;
-	while(lastLoopTrajectory.paths.front().poses.size() > 0 && computeEuclideanDistanceBetweenPoses(cutLoopTrajectory.paths.front().poses.front().pose, lastLoopTrajectory.paths.front().poses.front().pose) < 1.0)
-	{
-		lastLoopTrajectory.paths.front().poses.erase(lastLoopTrajectory.paths.front().poses.begin());
-	}
-	path_msgs::PathSequence middleLoopTrajectory = firstLoopTrajectory;
-	while(middleLoopTrajectory.paths.front().poses.size() > 0 && computeEuclideanDistanceBetweenPoses(cutLoopTrajectory.paths.front().poses.front().pose, middleLoopTrajectory.paths.front().poses.front().pose) < 1.0)
-	{
-		middleLoopTrajectory.paths.front().poses.erase(middleLoopTrajectory.paths.front().poses.begin());
-		
-	}
-
-	playing = true;
-
-	realTrajectory.paths.clear();
-
-	std_srvs::Empty disableMappingService = std_srvs::Empty();
-	disableMappingClient.call(disableMappingService);
-
-	path_msgs::FollowPathGoal goal;
-	goal.follower_options.init_mode = path_msgs::FollowerOptions::INIT_MODE_CONTINUE;
-	goal.follower_options.velocity = trajectorySpeed;
-	goal.path.header.frame_id = plannedTrajectory.paths.front().poses.front().header.frame_id;
-	goal.path.header.stamp = ros::Time::now();
-	for(int i = 0; i < firstLoopTrajectory.paths.size(); ++i)
-	{
-		if(i != 0 && firstLoopTrajectory.paths[i].forward == goal.path.paths.back().forward)
-		{
-			for(int j = 0; j < firstLoopTrajectory.paths[i].poses.size(); ++j)
-			{
-				goal.path.paths.back().poses.push_back(firstLoopTrajectory.paths[i].poses[j]);
-			}
-		}
-		else
-		{
-			goal.path.paths.push_back(firstLoopTrajectory.paths[i]);
-		}
-	}
-	for(int i = 1; i < req.nbLoops-1; ++i)
-	{
-		for(int j = 0; j < middleLoopTrajectory.paths.size(); ++j)
-		{
-			if(middleLoopTrajectory.paths[j].forward == goal.path.paths.back().forward)
-			{
-				for(int k = 0; k < middleLoopTrajectory.paths[j].poses.size(); ++k)
-				{
-					goal.path.paths.back().poses.push_back(middleLoopTrajectory.paths[j].poses[k]);
-				}
-			}
-			else
-			{
-				goal.path.paths.push_back(middleLoopTrajectory.paths[j]);
-			}
-		}
-	}
-
-	for(int i = 0; i < lastLoopTrajectory.paths.size(); ++i)
-	{
-		if(lastLoopTrajectory.paths[i].forward == goal.path.paths.back().forward)
-		{
-			for(int j = 0; j < lastLoopTrajectory.paths[i].poses.size(); ++j)
-			{
-				goal.path.paths.back().poses.push_back(lastLoopTrajectory.paths[i].poses[j]);
-			}
-		}
-		else
-		{
-			goal.path.paths.push_back(lastLoopTrajectory.paths[i]);
-		}
-	}
-	simpleActionClient->sendGoal(goal);
-
-	return true;
-}
-
-bool cancelTrajectoryServiceCallback(std_srvs::Empty::Request& req, std_srvs::Empty::Response& res)
-{
-	if(!playing)
-	{
-		ROS_WARN("Cannot cancel trajectory, no trajectory is being played.");
-		return false;
-	}
-
-	playing = false;
-
-	simpleActionClient->cancelAllGoals();
-
-	return true;
-}
-
-
-
-void loadLTR(std::string fileName, bool fromEnd)
-{
-    std::ofstream mapFile("/tmp/map.vtk");
-    std::ifstream ltrFile(fileName);
-    std::string line;
-    std::string pathFrameId;
-    bool parsingMap = true;
-    while (std::getline(ltrFile, line))
+    void loadLTR(std::string fileName, bool fromEnd)
     {
-        if(parsingMap)
+        std::ofstream mapFile("/tmp/map.vtk");
+        std::ifstream ltrFile(fileName);
+        std::string line;
+        std::string pathFrameId;
+        bool parsingMap = true;
+        while (std::getline(ltrFile, line))
         {
-            if (line.find(TRAJECTORY_DELIMITER) != std::string::npos)
+            if(parsingMap)
             {
-                std::getline(ltrFile, line);
-                pathFrameId = line.substr(FRAME_ID_START_POSITION);
-                parsingMap = false;
+                if (line.find(TRAJECTORY_DELIMITER) != std::string::npos)
+                {
+                    std::getline(ltrFile, line);
+                    pathFrameId = line.substr(FRAME_ID_START_POSITION);
+                    parsingMap = false;
+                }
+                else
+                {
+                    mapFile << line << std::endl;
+                }
             }
             else
             {
-                mapFile << line << std::endl;
+                if(plannedTrajectory.paths.empty())
+                {
+                    norlab_controllers_msgs::msg::DirectionalPath directionalPath;
+                    directionalPath.header.frame_id = pathFrameId;
+                    directionalPath.header.stamp = this->now();
+                    directionalPath.forward = true;
+                    plannedTrajectory.paths.push_back(directionalPath);
+                }
+
+                if(line.find("changing direction") != std::string::npos)
+                {
+                    norlab_controllers_msgs::msg::DirectionalPath directionalPath;
+                    directionalPath.header.frame_id = pathFrameId;
+                    directionalPath.header.stamp = this->now();
+                    directionalPath.forward = !plannedTrajectory.paths.back().forward;
+                    plannedTrajectory.paths.push_back(directionalPath);
+                    std::getline(ltrFile, line);
+                }
+
+                geometry_msgs::msg::PoseStamped pose;
+                int cursorPosition = line.find(",");
+                pose.pose.position.x = std::stod(line.substr(0, cursorPosition));
+                int previousCursorPosition = cursorPosition + 1;
+                cursorPosition = line.find("," , previousCursorPosition);
+                pose.pose.position.y = std::stod(line.substr(previousCursorPosition, cursorPosition));
+                previousCursorPosition = cursorPosition + 1;
+                cursorPosition = line.find("," , previousCursorPosition);
+                pose.pose.position.z = std::stod(line.substr(previousCursorPosition, cursorPosition));
+                previousCursorPosition = cursorPosition + 1;
+                cursorPosition = line.find("," , previousCursorPosition);
+                pose.pose.orientation.x = std::stod(line.substr(previousCursorPosition, cursorPosition));
+                previousCursorPosition = cursorPosition + 1;
+                cursorPosition = line.find("," , previousCursorPosition);
+                pose.pose.orientation.y = std::stod(line.substr(previousCursorPosition, cursorPosition));
+                previousCursorPosition = cursorPosition + 1;
+                cursorPosition = line.find("," , previousCursorPosition);
+                pose.pose.orientation.z = std::stod(line.substr(previousCursorPosition, cursorPosition));
+                previousCursorPosition = cursorPosition + 1;
+                cursorPosition = line.find("\n" , previousCursorPosition);
+                pose.pose.orientation.w = std::stod(line.substr(previousCursorPosition, cursorPosition));
+                pose.header.frame_id = pathFrameId;
+                plannedTrajectory.paths.back().poses.push_back(pose);
             }
+        }
+        ltrFile.close();
+        mapFile.close();
+
+        auto loadMapRequest = std::make_shared<norlab_icp_mapper_ros::srv::LoadMap::Request>();
+        loadMapRequest->map_file_name.data = "/tmp/map.vtk";
+
+        int pathIndex;
+        int poseIndex;
+        if(!fromEnd)
+        {
+            pathIndex = 0;
+            poseIndex = 0;
         }
         else
         {
-			if(plannedTrajectory.paths.empty())
-			{
-				path_msgs::DirectionalPath directionalPath;
-				directionalPath.header.frame_id = pathFrameId;
-				directionalPath.header.stamp = ros::Time::now();
-				directionalPath.forward = true;
-				plannedTrajectory.paths.push_back(directionalPath);
-			}
-
-			if(line.find("changing direction") != std::string::npos)
-			{
-				path_msgs::DirectionalPath directionalPath;
-				directionalPath.header.frame_id = pathFrameId;
-				directionalPath.header.stamp = ros::Time::now();
-				directionalPath.forward = !plannedTrajectory.paths.back().forward;
-				plannedTrajectory.paths.push_back(directionalPath);
-				std::getline(ltrFile, line);
-			}
-
-            geometry_msgs::PoseStamped pose;
-            int cursorPosition = line.find(",");
-            pose.pose.position.x = std::stod(line.substr(0, cursorPosition));
-            int previousCursorPosition = cursorPosition + 1;
-            cursorPosition = line.find("," , previousCursorPosition);
-            pose.pose.position.y = std::stod(line.substr(previousCursorPosition, cursorPosition));
-            previousCursorPosition = cursorPosition + 1;
-            cursorPosition = line.find("," , previousCursorPosition);
-            pose.pose.position.z = std::stod(line.substr(previousCursorPosition, cursorPosition));
-            previousCursorPosition = cursorPosition + 1;
-            cursorPosition = line.find("," , previousCursorPosition);
-            pose.pose.orientation.x = std::stod(line.substr(previousCursorPosition, cursorPosition));
-            previousCursorPosition = cursorPosition + 1;
-            cursorPosition = line.find("," , previousCursorPosition);
-            pose.pose.orientation.y = std::stod(line.substr(previousCursorPosition, cursorPosition));
-            previousCursorPosition = cursorPosition + 1;
-            cursorPosition = line.find("," , previousCursorPosition);
-            pose.pose.orientation.z = std::stod(line.substr(previousCursorPosition, cursorPosition));
-            previousCursorPosition = cursorPosition + 1;
-            cursorPosition = line.find("\n" , previousCursorPosition);
-            pose.pose.orientation.w = std::stod(line.substr(previousCursorPosition, cursorPosition));
-			pose.header.frame_id = pathFrameId;
-            plannedTrajectory.paths.back().poses.push_back(pose);
+            pathIndex = plannedTrajectory.paths.size() - 1;
+            poseIndex = plannedTrajectory.paths[pathIndex].poses.size() - 1;
         }
+
+        loadMapRequest->pose.position.x = plannedTrajectory.paths[pathIndex].poses[poseIndex].pose.position.x;
+        loadMapRequest->pose.position.y = plannedTrajectory.paths[pathIndex].poses[poseIndex].pose.position.y;
+        loadMapRequest->pose.position.z = plannedTrajectory.paths[pathIndex].poses[poseIndex].pose.position.z;
+        loadMapRequest->pose.orientation.x = plannedTrajectory.paths[pathIndex].poses[poseIndex].pose.orientation.x;
+        loadMapRequest->pose.orientation.y = plannedTrajectory.paths[pathIndex].poses[poseIndex].pose.orientation.y;
+        loadMapRequest->pose.orientation.z = plannedTrajectory.paths[pathIndex].poses[poseIndex].pose.orientation.z;
+        loadMapRequest->pose.orientation.w = plannedTrajectory.paths[pathIndex].poses[poseIndex].pose.orientation.w;
+        loadMapClient->async_send_request(loadMapRequest);
+
+        std::remove("/tmp/map.vtk");
+
+        plannedTrajectoryPublisher->publish(plannedTrajectory);
     }
-    ltrFile.close();
-    mapFile.close();
 
-    norlab_icp_mapper_ros::LoadMap loadMapService;
-    loadMapService.request.map_file_name.data = "/tmp/map.vtk";
-
-    int pathIndex;
-    int poseIndex;
-    if(!fromEnd)
+    void loadLTRServiceCallback(const std::shared_ptr<wiln::srv::LoadMapTraj::Request> req, std::shared_ptr<wiln::srv::LoadMapTraj::Response> res)
     {
-        pathIndex = 0;
-        poseIndex = 0;
+        loadLTR(req->file_name.data, false);
+        return;
     }
-    else
+
+    void loadLTRFromEndServiceCallback(const std::shared_ptr<wiln::srv::LoadMapTraj::Request> req, std::shared_ptr<wiln::srv::LoadMapTraj::Response> res)
     {
-        pathIndex = plannedTrajectory.paths.size() - 1;
-        poseIndex = plannedTrajectory.paths[pathIndex].poses.size() - 1;
+        loadLTR(req->file_name.data, true);
+        return;
     }
 
-    loadMapService.request.pose.position.x = plannedTrajectory.paths[pathIndex].poses[poseIndex].pose.position.x;
-    loadMapService.request.pose.position.y = plannedTrajectory.paths[pathIndex].poses[poseIndex].pose.position.y;
-    loadMapService.request.pose.position.z = plannedTrajectory.paths[pathIndex].poses[poseIndex].pose.position.z;
-    loadMapService.request.pose.orientation.x = plannedTrajectory.paths[pathIndex].poses[poseIndex].pose.orientation.x;
-    loadMapService.request.pose.orientation.y = plannedTrajectory.paths[pathIndex].poses[poseIndex].pose.orientation.y;
-    loadMapService.request.pose.orientation.z = plannedTrajectory.paths[pathIndex].poses[poseIndex].pose.orientation.z;
-    loadMapService.request.pose.orientation.w = plannedTrajectory.paths[pathIndex].poses[poseIndex].pose.orientation.w;
-    loadMapClient.call(loadMapService);
+    void playLoopTrajectoryServiceCallback(const std::shared_ptr<wiln::srv::PlayLoop::Request> req, std::shared_ptr<wiln::srv::PlayLoop::Response> res)
+    {
+        if(playing)
+        {
+            RCLCPP_WARN(this->get_logger(), "Trajectory is already being played.");
+            return;
+        }
 
-    std::remove("/tmp/map.vtk");
+        if(recording)
+        {
+            RCLCPP_WARN(this->get_logger(), "Cannot play trajectory while recording.");
+            return;
+        }
 
-	plannedTrajectoryPublisher.publish(plannedTrajectory);
-}
+        if(plannedTrajectory.paths.empty())
+        {
+            RCLCPP_WARN(this->get_logger(),"Cannot play an empty trajectory.");
+            return;
+        }
 
-bool loadLTRServiceCallback(wiln::LoadMapTraj::Request& req, wiln::LoadMapTraj::Response& res)
-{
-    loadLTR(req.file_name, false);
-    return true;
-}
+        norlab_controllers_msgs::msg::PathSequence cutLoopTrajectory = plannedTrajectory;
+        int poseIndex = cutLoopTrajectory.paths.back().poses.size() - 1;
+        while(poseIndex >= 1 && computeEuclideanDistanceBetweenPoses(cutLoopTrajectory.paths.back().poses[poseIndex - 1].pose, cutLoopTrajectory.paths.front().poses.front().pose) <
+                                computeEuclideanDistanceBetweenPoses(cutLoopTrajectory.paths.back().poses[poseIndex].pose, cutLoopTrajectory.paths.front().poses.front().pose))
+        {
+            cutLoopTrajectory.paths.back().poses.erase(cutLoopTrajectory.paths.back().poses.begin() + poseIndex);
+            --poseIndex;
+        }
+        norlab_controllers_msgs::msg::PathSequence firstLoopTrajectory = cutLoopTrajectory;
+        while(firstLoopTrajectory.paths.front().poses.size() > 0 && computeEuclideanDistanceBetweenPoses(cutLoopTrajectory.paths.back().poses.back().pose, firstLoopTrajectory.paths.back().poses.back().pose) < 1.0)
+        {
+            firstLoopTrajectory.paths.front().poses.erase(firstLoopTrajectory.paths.back().poses.end()-1);
+        }
+        norlab_controllers_msgs::msg::PathSequence lastLoopTrajectory = cutLoopTrajectory;
+        while(lastLoopTrajectory.paths.front().poses.size() > 0 && computeEuclideanDistanceBetweenPoses(cutLoopTrajectory.paths.front().poses.front().pose, lastLoopTrajectory.paths.front().poses.front().pose) < 1.0)
+        {
+            lastLoopTrajectory.paths.front().poses.erase(lastLoopTrajectory.paths.front().poses.begin());
+        }
+        norlab_controllers_msgs::msg::PathSequence middleLoopTrajectory = firstLoopTrajectory;
+        while(middleLoopTrajectory.paths.front().poses.size() > 0 && computeEuclideanDistanceBetweenPoses(cutLoopTrajectory.paths.front().poses.front().pose, middleLoopTrajectory.paths.front().poses.front().pose) < 1.0)
+        {
+            middleLoopTrajectory.paths.front().poses.erase(middleLoopTrajectory.paths.front().poses.begin());
 
-bool loadLTRFromEndServiceCallback(wiln::LoadMapTraj::Request& req, wiln::LoadMapTraj::Response& res)
-{
-    loadLTR(req.file_name, true);
-    return true;
-}
+        }
+
+        playing = true;
+
+        realTrajectory.paths.clear();
+
+        auto disableMappingRequest = std::make_shared<std_srvs::srv::Empty::Request>();
+        disableMappingClient->async_send_request(disableMappingRequest);
+
+        // TODO: Properly set up action call here
+        norlab_controllers_msgs::action::FollowPathGoal goal;
+        goal.follower_options.init_mode = norlab_controllers_msgs:msg::FollowerOptions::INIT_MODE_CONTINUE;
+        goal.follower_options.velocity = trajectorySpeed;
+        goal.path.header.frame_id = plannedTrajectory.paths.front().poses.front().header.frame_id;
+        goal.path.header.stamp = this->now();
+        for(int i = 0; i < firstLoopTrajectory.paths.size(); ++i)
+        {
+            if(i != 0 && firstLoopTrajectory.paths[i].forward == goal.path.paths.back().forward)
+            {
+                for(int j = 0; j < firstLoopTrajectory.paths[i].poses.size(); ++j)
+                {
+                    goal.path.paths.back().poses.push_back(firstLoopTrajectory.paths[i].poses[j]);
+                }
+            }
+            else
+            {
+                goal.path.paths.push_back(firstLoopTrajectory.paths[i]);
+            }
+        }
+        for(int i = 1; i < req->nb_loops.data-1; ++i)
+        {
+            for(int j = 0; j < middleLoopTrajectory.paths.size(); ++j)
+            {
+                if(middleLoopTrajectory.paths[j].forward == goal.path.paths.back().forward)
+                {
+                    for(int k = 0; k < middleLoopTrajectory.paths[j].poses.size(); ++k)
+                    {
+                        goal.path.paths.back().poses.push_back(middleLoopTrajectory.paths[j].poses[k]);
+                    }
+                }
+                else
+                {
+                    goal.path.paths.push_back(middleLoopTrajectory.paths[j]);
+                }
+            }
+        }
+
+        for(int i = 0; i < lastLoopTrajectory.paths.size(); ++i)
+        {
+            if(lastLoopTrajectory.paths[i].forward == goal.path.paths.back().forward)
+            {
+                for(int j = 0; j < lastLoopTrajectory.paths[i].poses.size(); ++j)
+                {
+                    goal.path.paths.back().poses.push_back(lastLoopTrajectory.paths[i].poses[j]);
+                }
+            }
+            else
+            {
+                goal.path.paths.push_back(lastLoopTrajectory.paths[i]);
+            }
+        }
+        simpleActionClient->sendGoal(goal);
+
+        return true;
+    }
+
+    void cancelTrajectoryServiceCallback(const std::shared_ptr<std_srvs::srv::Empty::Request req, std::shared_ptr<std_srvs::srv::Empty::Response res)
+    {
+        if(!playing)
+        {
+            RCLCPP_WARN(this->get_logger(), "Cannot cancel trajectory, no trajectory is being played.");
+            return;
+        }
+
+        playing = false;
+
+        // TODO: properly set up action call here
+        simpleActionClient->cancelAllGoals();
+
+        return true;
+    }
+
+};
 
 int main(int argc, char** argv)
 {
-	ros::init(argc, argv, "wiln_node");
-	ros::NodeHandle nodeHandle;
-	ros::NodeHandle privateNodeHandle("~");
-
-	drivingForward.store(true);
-	lastDrivingDirection.store(true);
-
-	ros::Subscriber plannedTrajectorySubscriber = nodeHandle.subscribe("pose_in", 1000, plannedTrajectoryCallback);
-	ros::Subscriber realTrajectorySubscriber = nodeHandle.subscribe("pose_in", 1000, realTrajectoryCallback);
-	ros::Subscriber trajectoryResultSubscriber = nodeHandle.subscribe("follow_path/result", 1000, trajectoryResultCallback);
-    ros::Subscriber icpOdomSubscriber = nodeHandle.subscribe("icp_odom", 1000, icpOdomCallback);
-    ros::Subscriber commandVelocitySubscriber = nodeHandle.subscribe("cmd_vel", 1000, commandVelocityCallback);
-
-	plannedTrajectoryPublisher = nodeHandle.advertise<path_msgs::PathSequence>("planned_trajectory", 1000, true);
-	realTrajectoryPublisher = nodeHandle.advertise<path_msgs::PathSequence>("real_trajectory", 1000, true);
-
-	ros::ServiceServer startRecordingService = nodeHandle.advertiseService("start_recording", startRecordingServiceCallback);
-	ros::ServiceServer stopRecordingService = nodeHandle.advertiseService("stop_recording", stopRecordingServiceCallback);
-    ros::ServiceServer playTrajectoryService = nodeHandle.advertiseService("play_trajectory", playTrajectoryServiceCallback);
-    ros::ServiceServer playLoopTrajectoryService = nodeHandle.advertiseService("play_loop_trajectory", playLoopTrajectoryServiceCallback);
-    ros::ServiceServer clearTrajectoryService = nodeHandle.advertiseService("clear_trajectory", clearTrajectoryServiceCallback);
-    ros::ServiceServer smoothTrajectoryService = nodeHandle.advertiseService("smooth_trajectory", smoothTrajectoryServiceCallback);
-    ros::ServiceServer cancelTrajectoryService = nodeHandle.advertiseService("cancel_trajectory", cancelTrajectoryServiceCallback);
-
-    ros::ServiceServer saveLTRService = nodeHandle.advertiseService("save_ltr", saveLTRServiceCallback);
-    ros::ServiceServer loadLTRService = nodeHandle.advertiseService("load_ltr", loadLTRServiceCallback);
-    ros::ServiceServer loadLTRFromEndService = nodeHandle.advertiseService("load_ltr_from_end", loadLTRFromEndServiceCallback);
-
-    saveMapClient = nodeHandle.serviceClient<norlab_icp_mapper_ros::SaveMap>("save_map");
-    loadMapClient = nodeHandle.serviceClient<norlab_icp_mapper_ros::LoadMap>("load_map");
-    enableMappingClient = nodeHandle.serviceClient<std_srvs::Empty>("enable_mapping");
-    disableMappingClient = nodeHandle.serviceClient<std_srvs::Empty>("disable_mapping");
-
-	privateNodeHandle.param<float>("trajectory_speed", trajectorySpeed, 1.0);
-	privateNodeHandle.param<float>("delay_between_waypoints", delayBetweenWaypoints, 0.5);
-	privateNodeHandle.param<int>("low_pass_filter_window_size", lowPassFilterWindowSize, 5);
-
-	recording = false;
-	playing = false;
-
-	simpleActionClient = std::unique_ptr<actionlib::SimpleActionClient<path_msgs::FollowPathAction>>(
-			new actionlib::SimpleActionClient<path_msgs::FollowPathAction>("follow_path", true));
-
-	ros::MultiThreadedSpinner spinner;
-    spinner.spin();
+    rclcpp::init(argc, argv);
+    rclcpp::spin(std::make_shared<WilnNode>());
+    rclcpp::shutdown();
 
 	return 0;
 }
