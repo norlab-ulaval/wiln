@@ -70,6 +70,15 @@ public:
         commandedVelocitySubscription = this->create_subscription<geometry_msgs::msg::Twist>("cmd_vel_in", 1000,
                                                                                              std::bind(&WilnNode::commandVelocityCallback, this,
                                                                                                        std::placeholders::_1));
+        plannedTrajectorySubscription = this->create_subscription<geometry_msgs::msg::PoseStamped>("pose_in", 1000,
+                                                                                             std::bind(&WilnNode::plannedTrajectoryCallback, this,
+                                                                                                       std::placeholders::_1));
+        realTrajectorySubscription = this->create_subscription<geometry_msgs::msg::PoseStamped>("pose_in", 1000,
+                                                                                                   std::bind(&WilnNode::realTrajectoryCallback, this,
+                                                                                                             std::placeholders::_1));
+//        trajectoryResultSubscription = this->create_subscription<norlab_controllers_msgs::action::FollowPath::Result>("follow_path/result", 1000,
+//                                                                                                std::bind(&WilnNode::trajectoryResultCallback, this,
+//                                                                                                          std::placeholders::_1));
 
         plannedTrajectoryPublisher = this->create_publisher<norlab_controllers_msgs::msg::PathSequence>("planned_trajectory", 1000);
         realTrajectoryPublisher = this->create_publisher<norlab_controllers_msgs::msg::PathSequence>("real_trajectory", 1000);
@@ -125,6 +134,10 @@ private:
 
     rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odomSubscription;
     rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr commandedVelocitySubscription;
+    rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr plannedTrajectorySubscription;
+    rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr realTrajectorySubscription;
+//    rclcpp::Subscription<norlab_controllers_msgs::action::FollowPath::Result>::SharedPtr trajectoryResultSubscription;
+
 
     rclcpp::Publisher<norlab_controllers_msgs::msg::PathSequence>::SharedPtr plannedTrajectoryPublisher;
     rclcpp::Publisher<norlab_controllers_msgs::msg::PathSequence>::SharedPtr realTrajectoryPublisher;

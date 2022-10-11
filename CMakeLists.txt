@@ -13,6 +13,9 @@ find_package(nav_msgs REQUIRED)
 find_package(norlab_icp_mapper_ros REQUIRED)
 find_package(norlab_controllers_msgs REQUIRED)
 
+install(DIRECTORY launch
+        DESTINATION share/${PROJECT_NAME})
+
 rosidl_generate_interfaces(${PROJECT_NAME}
 #        "msg/DirectionalPath.msg"
 #        "msg/PathSequence.msg"
