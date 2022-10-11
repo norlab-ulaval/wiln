@@ -317,6 +317,7 @@ private:
         return;
     }
 
+    //TODO: Implement clear trajectory service
     void clearTrajectoryServiceCallback(const std::shared_ptr<std_srvs::srv::Empty::Request> req, std::shared_ptr<std_srvs::srv::Empty::Response> res)
     {
         plannedTrajectory.paths.clear();
