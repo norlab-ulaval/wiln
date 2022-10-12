@@ -56,6 +56,9 @@ public:
         smoothTrajectoryService = this->create_service<std_srvs::srv::Empty>("smooth_trajectory",
                                                                      std::bind(&WilnNode::smoothTrajectoryServiceCallback, this, std::placeholders::_1,
                                                                                std::placeholders::_2));
+        clearTrajectoryService = this->create_service<std_srvs::srv::Empty>("clear_trajectory",
+                                                                             std::bind(&WilnNode::clearTrajectoryServiceCallback, this, std::placeholders::_1,
+                                                                                       std::placeholders::_2));
 
         enableMappingClient = this->create_client<std_srvs::srv::Empty>("enable_mapping");
         disableMappingClient = this->create_client<std_srvs::srv::Empty>("disable_mapping");
@@ -102,6 +105,7 @@ private:
     rclcpp::Service<std_srvs::srv::Empty>::SharedPtr  playLineService;
     rclcpp::Service<std_srvs::srv::Empty>::SharedPtr  cancelTrajectoryService;
     rclcpp::Service<std_srvs::srv::Empty>::SharedPtr  smoothTrajectoryService;
+    rclcpp::Service<std_srvs::srv::Empty>::SharedPtr  clearTrajectoryService;
 
     rclcpp::Client<std_srvs::srv::Empty>::SharedPtr enableMappingClient;
     rclcpp::Client<std_srvs::srv::Empty>::SharedPtr disableMappingClient;
@@ -237,10 +241,28 @@ private:
         }
     }
 
-    // TODO: Re-program actionlib client here
+    void goalResponseCallback(const rclcpp_action::ClientGoalHandle<norlab_controllers_msgs::action::FollowPath>::SharedPtr & trajectoryGoalHandle)
+    {
+        if (!trajectoryGoalHandle)
+        {
+            RCLCPP_ERROR(this->get_logger(), "Goal was rejected by server");
+        } else {
+            RCLCPP_INFO(this->get_logger(), "Goal accepted by server, waiting for result");
+        }
+    }
+
+    void trajectoryFeedbackCallback(rclcpp_action::ClientGoalHandle<norlab_controllers_msgs::action::FollowPath>::SharedPtr,
+                                    const std::shared_ptr<const norlab_controllers_msgs::action::FollowPath::Feedback> feedback)
+    {
+        //TODO: program feedback callback
+        return;
+    }
+
     void trajectoryResultCallback(const rclcpp_action::ClientGoalHandle<norlab_controllers_msgs::action::FollowPath>::WrappedResult & trajectory_result)
     {
         playing = false;
+
+        RCLCPP_WARN(this->get_logger(), "i got in trajectory_result_callback");
 
         if(trajectory_result.code == rclcpp_action::ResultCode::SUCCEEDED)
         {
@@ -249,7 +271,6 @@ private:
         else
         {
             RCLCPP_WARN_STREAM(this->get_logger(), "Trajectory goal was not reached.");
-            // TODO: Log return status code
         }
     }
 
@@ -317,7 +338,6 @@ private:
         return;
     }
 
-    //TODO: Implement clear trajectory service
     void clearTrajectoryServiceCallback(const std::shared_ptr<std_srvs::srv::Empty::Request> req, std::shared_ptr<std_srvs::srv::Empty::Response> res)
     {
         plannedTrajectory.paths.clear();
@@ -327,6 +347,21 @@ private:
     void smoothTrajectoryServiceCallback(const std::shared_ptr<std_srvs::srv::Empty::Request> req, std::shared_ptr<std_srvs::srv::Empty::Response> res)
     {
         plannedTrajectory = smoothTrajectoryLowPass(plannedTrajectory);
+        return;
+    }
+
+    void cancelTrajectoryServiceCallback(const std::shared_ptr<std_srvs::srv::Empty::Request> req, std::shared_ptr<std_srvs::srv::Empty::Response> res)
+    {
+        if(!playing)
+        {
+            RCLCPP_WARN(this->get_logger(), "Cannot cancel trajectory, no trajectory is being played.");
+            return;
+        }
+
+        playing = false;
+
+        // TODO: validate action call here
+        followPathClient->async_cancel_all_goals();
         return;
     }
 
@@ -370,80 +405,6 @@ private:
             ++pathIndex;
         }
         return std::atan2(dy, dx);
-    }
-
-    void playLineTrajectoryServiceCallback(const std::shared_ptr<std_srvs::srv::Empty::Request> req, std::shared_ptr<std_srvs::srv::Empty::Response> res)
-    {
-        if(playing)
-        {
-            RCLCPP_WARN(this->get_logger(), "Trajectory is already being played.");
-            return;
-        }
-
-        if(recording)
-        {
-            RCLCPP_WARN(this->get_logger(), "Cannot play trajectory while recording.");
-            return;
-        }
-
-        if(plannedTrajectory.paths.empty())
-        {
-            RCLCPP_WARN(this->get_logger(), "Cannot play an empty trajectory.");
-            return;
-        }
-
-        robotPoseLock.lock();
-
-        double robotPoseToTrajectoryStartDistance = computeEuclideanDistanceBetweenPoses(robotPose, plannedTrajectory.paths.front().poses.front().pose);
-        double robotPoseToTrajectoryEndDistance = computeEuclideanDistanceBetweenPoses(robotPose, plannedTrajectory.paths.back().poses.back().pose);
-        if(robotPoseToTrajectoryEndDistance < robotPoseToTrajectoryStartDistance)
-        {
-
-            std::reverse(plannedTrajectory.paths.begin(), plannedTrajectory.paths.end());
-            for(int i = 0; i < plannedTrajectory.paths.size(); ++i)
-            {
-                std::reverse(plannedTrajectory.paths[i].poses.begin(), plannedTrajectory.paths[i].poses.end());
-            }
-        }
-
-        double robotPoseYaw = extractYawFromQuaternion(robotPose.orientation);
-        double trajectoryStartYaw = computeTrajectoryYaw(plannedTrajectory, robotPose);
-        double angleDistance = std::fabs(trajectoryStartYaw - robotPoseYaw);
-        if (angleDistance > M_PI)
-        {
-            angleDistance = (2 * M_PI) - angleDistance;
-        }
-
-        if(angleDistance > M_PI_2)
-        {
-            for(int i = 0; i < plannedTrajectory.paths.size(); ++i)
-            {
-                plannedTrajectory.paths[i].forward = !plannedTrajectory.paths[i].forward;
-            }
-        }
-        robotPoseLock.unlock();
-
-        playing = true;
-
-        realTrajectory.paths.clear();
-
-        auto enableMappingRequest = std::make_shared<std_srvs::srv::Empty::Request>();
-        enableMappingClient->async_send_request(enableMappingRequest);
-
-        // TODO: validate action call
-        auto goal_msg = norlab_controllers_msgs::action::FollowPath::Goal();
-        goal_msg.follower_options.init_mode.data = 1; // init_mode = 1 : continue
-        goal_msg.follower_options.velocity.data = trajectorySpeed;
-        goal_msg.path.header.frame_id = plannedTrajectory.paths.front().poses.front().header.frame_id;
-        goal_msg.path.header.stamp = this->now();
-
-        for(int i = 0; i < plannedTrajectory.paths.size(); ++i)
-        {
-            goal_msg.path.paths.push_back(plannedTrajectory.paths[i]);
-        }
-        followPathClient->async_send_goal(goal_msg);
-
-        return;
     }
 
     void saveLTRServiceCallback(const std::shared_ptr<wiln::srv::SaveMapTraj::Request> req, std::shared_ptr<wiln::srv::SaveMapTraj::Response> res)
@@ -592,6 +553,88 @@ private:
         return;
     }
 
+    void playLineTrajectoryServiceCallback(const std::shared_ptr<std_srvs::srv::Empty::Request> req, std::shared_ptr<std_srvs::srv::Empty::Response> res)
+    {
+        if(playing)
+        {
+            RCLCPP_WARN(this->get_logger(), "Trajectory is already being played.");
+            return;
+        }
+
+        if(recording)
+        {
+            RCLCPP_WARN(this->get_logger(), "Cannot play trajectory while recording.");
+            return;
+        }
+
+        if(plannedTrajectory.paths.empty())
+        {
+            RCLCPP_WARN(this->get_logger(), "Cannot play an empty trajectory.");
+            return;
+        }
+
+        robotPoseLock.lock();
+
+        double robotPoseToTrajectoryStartDistance = computeEuclideanDistanceBetweenPoses(robotPose, plannedTrajectory.paths.front().poses.front().pose);
+        double robotPoseToTrajectoryEndDistance = computeEuclideanDistanceBetweenPoses(robotPose, plannedTrajectory.paths.back().poses.back().pose);
+        if(robotPoseToTrajectoryEndDistance < robotPoseToTrajectoryStartDistance)
+        {
+
+            std::reverse(plannedTrajectory.paths.begin(), plannedTrajectory.paths.end());
+            for(int i = 0; i < plannedTrajectory.paths.size(); ++i)
+            {
+                std::reverse(plannedTrajectory.paths[i].poses.begin(), plannedTrajectory.paths[i].poses.end());
+            }
+        }
+
+        double robotPoseYaw = extractYawFromQuaternion(robotPose.orientation);
+        double trajectoryStartYaw = computeTrajectoryYaw(plannedTrajectory, robotPose);
+        double angleDistance = std::fabs(trajectoryStartYaw - robotPoseYaw);
+        if (angleDistance > M_PI)
+        {
+            angleDistance = (2 * M_PI) - angleDistance;
+        }
+
+        if(angleDistance > M_PI_2)
+        {
+            for(int i = 0; i < plannedTrajectory.paths.size(); ++i)
+            {
+                plannedTrajectory.paths[i].forward = !plannedTrajectory.paths[i].forward;
+            }
+        }
+        robotPoseLock.unlock();
+
+        playing = true;
+
+        realTrajectory.paths.clear();
+
+        auto enableMappingRequest = std::make_shared<std_srvs::srv::Empty::Request>();
+        enableMappingClient->async_send_request(enableMappingRequest);
+
+        // TODO: validate action call
+        auto goal_msg = norlab_controllers_msgs::action::FollowPath::Goal();
+        goal_msg.follower_options.init_mode.data = 1; // init_mode = 1 : continue
+        goal_msg.follower_options.velocity.data = trajectorySpeed;
+        goal_msg.path.header.frame_id = plannedTrajectory.paths.front().poses.front().header.frame_id;
+        goal_msg.path.header.stamp = this->now();
+
+        for(int i = 0; i < plannedTrajectory.paths.size(); ++i)
+        {
+            goal_msg.path.paths.push_back(plannedTrajectory.paths[i]);
+        }
+
+        auto send_goal_options = rclcpp_action::Client<norlab_controllers_msgs::action::FollowPath>::SendGoalOptions();
+        send_goal_options.goal_response_callback =
+                std::bind(&WilnNode::goalResponseCallback, this, std::placeholders::_1);
+        send_goal_options.feedback_callback =
+                std::bind(&WilnNode::trajectoryFeedbackCallback, this, std::placeholders::_1, std::placeholders::_2);
+        send_goal_options.result_callback =
+                std::bind(&WilnNode::trajectoryResultCallback, this, std::placeholders::_1);
+        followPathClient->async_send_goal(goal_msg, send_goal_options);
+
+        return;
+    }
+
     void playLoopTrajectoryServiceCallback(const std::shared_ptr<wiln::srv::PlayLoop::Request> req, std::shared_ptr<wiln::srv::PlayLoop::Response> res)
     {
         if(playing)
@@ -696,22 +739,15 @@ private:
                 goal_msg.path.paths.push_back(lastLoopTrajectory.paths[i]);
             }
         }
+
+        auto send_goal_options = rclcpp_action::Client<norlab_controllers_msgs::action::FollowPath>::SendGoalOptions();
+        send_goal_options.goal_response_callback =
+                std::bind(&WilnNode::goalResponseCallback, this, std::placeholders::_1);
+        send_goal_options.feedback_callback =
+                std::bind(&WilnNode::trajectoryFeedbackCallback, this, std::placeholders::_1, std::placeholders::_2);
+        send_goal_options.result_callback =
+                std::bind(&WilnNode::trajectoryResultCallback, this, std::placeholders::_1);
         followPathClient->async_send_goal(goal_msg);
-        return;
-    }
-
-    void cancelTrajectoryServiceCallback(const std::shared_ptr<std_srvs::srv::Empty::Request> req, std::shared_ptr<std_srvs::srv::Empty::Response> res)
-    {
-        if(!playing)
-        {
-            RCLCPP_WARN(this->get_logger(), "Cannot cancel trajectory, no trajectory is being played.");
-            return;
-        }
-
-        playing = false;
-
-        // TODO: validate action call here
-        followPathClient->async_cancel_all_goals();
         return;
     }
 
