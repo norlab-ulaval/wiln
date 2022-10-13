@@ -409,10 +409,37 @@ private:
 
     void saveLTRServiceCallback(const std::shared_ptr<wiln::srv::SaveMapTraj::Request> req, std::shared_ptr<wiln::srv::SaveMapTraj::Response> res)
     {
+        //TODO: force save to same working repository as mapper
+        using namespace std::chrono_literals;
         auto saveMapRequest = std::make_shared<norlab_icp_mapper_ros::srv::SaveMap::Request>();
         std::string mapName = req->file_name.data.substr(0, req->file_name.data.rfind('.')) + ".vtk";
         saveMapRequest->map_file_name.data = mapName;
-        saveMapClient->async_send_request(saveMapRequest);
+        auto saveMapFuture = saveMapClient->async_send_request(saveMapRequest);
+        auto status = saveMapFuture.wait_for(30s);  //not spinning here!
+        RCLCPP_INFO(this->get_logger(), std::to_string(saveMapFuture.get()->save_success.data));
+        if (saveMapFuture.get()->save_success.data)
+        {
+            RCLCPP_INFO(this->get_logger(), "TRUE");
+        }
+//        else if(status == std::future_status::timeout)
+//        {
+//            RCLCPP_INFO(this->get_logger(), "TIMEOUT");
+//        }
+        else
+        {
+            RCLCPP_INFO(this->get_logger(), "FALSE");
+        }
+//        std::shared_ptr<rclcpp::Node> wilnNodeSharedPtr = std::shared_ptr<rclcpp::Node>(this);
+//        if (rclcpp::spin_until_future_complete(this->shared_from_this(), saveMapFuture) == rclcpp::FutureReturnCode::SUCCESS) {
+//            RCLCPP_INFO(this->get_logger(), "PASSED");
+//        }
+//        RCLCPP_INFO(this->get_logger(), "A");
+//        while (saveMapFuture.wait_for(0.1s) != std::future_status::ready){
+//        {
+//            RCLCPP_INFO(this->get_logger(), "while");
+//        }
+//        RCLCPP_INFO(this->get_logger(), "B");
+
         std::rename(mapName.c_str(), req->file_name.data.c_str());
         std::ofstream ltrFile(req->file_name.data, std::ios::app);
 
@@ -438,10 +465,12 @@ private:
         }
 
         ltrFile.close();
+        RCLCPP_INFO(this->get_logger(), "LTR file succesfully saved");
     }
 
     void loadLTR(std::string fileName, bool fromEnd)
     {
+        using namespace std::chrono_literals;
         std::ofstream mapFile("/tmp/map.vtk");
         std::ifstream ltrFile(fileName);
         std::string line;
@@ -535,6 +564,15 @@ private:
         loadMapRequest->pose.orientation.z = plannedTrajectory.paths[pathIndex].poses[poseIndex].pose.orientation.z;
         loadMapRequest->pose.orientation.w = plannedTrajectory.paths[pathIndex].poses[poseIndex].pose.orientation.w;
         loadMapClient->async_send_request(loadMapRequest);
+
+        auto loadMapFuture = loadMapClient->async_send_request(loadMapRequest);
+
+
+        RCLCPP_INFO(this->get_logger(), "A");
+        while (loadMapFuture.wait_for(0.1s) != std::future_status::ready){
+            RCLCPP_INFO(this->get_logger(), "while");
+        }
+        RCLCPP_INFO(this->get_logger(), "B");
 
         std::remove("/tmp/map.vtk");
 
@@ -756,8 +794,13 @@ private:
 int main(int argc, char** argv)
 {
     rclcpp::init(argc, argv);
-    rclcpp::spin(std::make_shared<WilnNode>());
+//    rclcpp::spin(std::make_shared<WilnNode>());
+    rclcpp::executors::MultiThreadedExecutor executor;
+    auto wiln_node = std::make_shared<WilnNode>();
+    executor.add_node(wiln_node);
+    executor.spin();
     rclcpp::shutdown();
+
 
 	return 0;
 }
