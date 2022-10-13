@@ -9,6 +9,7 @@
   <!-- Example:  -->
   <!-- <maintainer email="jane.doe@example.com">Jane Doe</maintainer> -->
   <maintainer email="simon-pierre.deschenes.1@ulaval.ca">Simon-Pierre Deschênes</maintainer>
+  <maintainer email="dominic.baril.1@ulaval.ca">Dominic Baril</maintainer>
 
 
   <!-- One license tag required, multiple allowed, one license per tag -->
@@ -27,6 +28,9 @@
   <!-- Authors do not have to be maintainers, but could be -->
   <!-- Example: -->
   <author email="simon-pierre.deschenes.1@ulaval.ca">Simon-Pierre Deschênes</author>
+  <author email="dominic.baril.1@ulaval.ca">Dominic Baril</author>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
 
   <depend>rclcpp</depend>
   <depend>std_msgs</depend>
@@ -36,7 +40,7 @@
   <depend>tf2_ros</depend>
   <depend>tf2</depend>
   <depend>norlab_icp_mapper_ros</depend>
-  <depend>norlab_icp_controller_msgs</depend>
+  <depend>norlab_controller_msgs</depend>
 
   <build_depend>rosidl_default_generators</build_depend>
 

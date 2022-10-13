@@ -13,12 +13,7 @@ find_package(nav_msgs REQUIRED)
 find_package(norlab_icp_mapper_ros REQUIRED)
 find_package(norlab_controllers_msgs REQUIRED)
 
-install(DIRECTORY launch
-        DESTINATION share/${PROJECT_NAME})
-
 rosidl_generate_interfaces(${PROJECT_NAME}
-#        "msg/DirectionalPath.msg"
-#        "msg/PathSequence.msg"
         "srv/LoadMapTraj.srv"
         "srv/PlayLoop.srv"
         "srv/SaveMapTraj.srv"
@@ -43,7 +38,6 @@ ament_target_dependencies(wiln_node
         norlab_icp_mapper_ros
         norlab_controllers_msgs
         )
-
 target_link_libraries(wiln_node
         ${wiln_LIBRARIES}
         )
@@ -55,5 +49,8 @@ ament_export_dependencies(rosidl_default_runtime)
 install(TARGETS wiln_node
         DESTINATION lib/${PROJECT_NAME}
         )
+
+install(DIRECTORY launch
+        DESTINATION share/${PROJECT_NAME})
 
 ament_package()
