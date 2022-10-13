@@ -10,37 +10,30 @@ find_package(tf2_geometry_msgs REQUIRED)
 find_package(tf2 REQUIRED)
 find_package(rclcpp_action REQUIRED)
 find_package(nav_msgs REQUIRED)
+find_package(rosidl_default_generators REQUIRED)
 find_package(norlab_icp_mapper_ros REQUIRED)
 find_package(norlab_controllers_msgs REQUIRED)
 
 rosidl_generate_interfaces(${PROJECT_NAME}
-        "srv/LoadMapTraj.srv"
-        "srv/PlayLoop.srv"
-        "srv/SaveMapTraj.srv"
-        DEPENDENCIES std_msgs
-)
-
-include_directories(
-        ${wiln_INCLUDE_DIRS}
+    "srv/LoadMapTraj.srv"
+    "srv/PlayLoop.srv"
+    "srv/SaveMapTraj.srv"
+    DEPENDENCIES std_msgs std_srvs
 )
 
 add_executable(wiln_node src/wiln_node.cpp)
-
 ament_target_dependencies(wiln_node
-        rclcpp
-        std_msgs
-        geometry_msgs
-        nav_msgs
-        std_srvs
-        tf2_ros
-        tf2
-        rclcpp_action
-        norlab_icp_mapper_ros
-        norlab_controllers_msgs
-        )
-target_link_libraries(wiln_node
-        ${wiln_LIBRARIES}
-        )
+    rclcpp
+    std_msgs
+    geometry_msgs
+    nav_msgs
+    std_srvs
+    tf2_ros
+    tf2
+    rclcpp_action
+    norlab_icp_mapper_ros
+    norlab_controllers_msgs
+)
 
 rosidl_get_typesupport_target(cpp_typesupport_target ${PROJECT_NAME} "rosidl_typesupport_cpp")
 target_link_libraries(wiln_node "${cpp_typesupport_target}")
