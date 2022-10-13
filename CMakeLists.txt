@@ -17,8 +17,8 @@ rosidl_generate_interfaces(${PROJECT_NAME}
         "srv/LoadMapTraj.srv"
         "srv/PlayLoop.srv"
         "srv/SaveMapTraj.srv"
-        DEPENDENCIES std_msgs geometry_msgs norlab_controllers_msgs
-        )
+        DEPENDENCIES std_msgs
+)
 
 include_directories(
         ${wiln_INCLUDE_DIRS}
@@ -48,9 +48,9 @@ ament_export_dependencies(rosidl_default_runtime)
 
 install(TARGETS wiln_node
         DESTINATION lib/${PROJECT_NAME}
-        )
+)
 
-install(DIRECTORY launch
-        DESTINATION share/${PROJECT_NAME})
+#install(DIRECTORY launch
+#        DESTINATION share/${PROJECT_NAME})
 
 ament_package()
