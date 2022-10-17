@@ -10,6 +10,7 @@
 #include <wiln/srv/play_loop.hpp>
 #include <norlab_icp_mapper_ros/srv/save_map.hpp>
 #include <norlab_icp_mapper_ros/srv/load_map.hpp>
+#include <service_caller/ServiceCaller.hpp>
 
 #include <geometry_msgs/msg/twist.hpp>
 #include <nav_msgs/msg/odometry.hpp>
@@ -414,31 +415,11 @@ private:
         auto saveMapRequest = std::make_shared<norlab_icp_mapper_ros::srv::SaveMap::Request>();
         std::string mapName = req->file_name.data.substr(0, req->file_name.data.rfind('.')) + ".vtk";
         saveMapRequest->map_file_name.data = mapName;
-        auto saveMapFuture = saveMapClient->async_send_request(saveMapRequest);
-        auto status = saveMapFuture.wait_for(30s);  //not spinning here!
-        RCLCPP_INFO(this->get_logger(), std::to_string(saveMapFuture.get()->save_success.data));
-        if (saveMapFuture.get()->save_success.data)
-        {
-            RCLCPP_INFO(this->get_logger(), "TRUE");
-        }
-//        else if(status == std::future_status::timeout)
-//        {
-//            RCLCPP_INFO(this->get_logger(), "TIMEOUT");
-//        }
-        else
-        {
-            RCLCPP_INFO(this->get_logger(), "FALSE");
-        }
-//        std::shared_ptr<rclcpp::Node> wilnNodeSharedPtr = std::shared_ptr<rclcpp::Node>(this);
-//        if (rclcpp::spin_until_future_complete(this->shared_from_this(), saveMapFuture) == rclcpp::FutureReturnCode::SUCCESS) {
-//            RCLCPP_INFO(this->get_logger(), "PASSED");
-//        }
-//        RCLCPP_INFO(this->get_logger(), "A");
-//        while (saveMapFuture.wait_for(0.1s) != std::future_status::ready){
-//        {
-//            RCLCPP_INFO(this->get_logger(), "while");
-//        }
-//        RCLCPP_INFO(this->get_logger(), "B");
+//        auto saveMapFuture = saveMapClient->async_send_request(saveMapRequest);
+//        std::shared_ptr<norlab_icp_mapper_ros::srv::SaveMap::Request> request = std::make_shared<norlab_icp_mapper_ros::srv::SaveMap::Request>();
+        RCLCPP_INFO(this->get_logger(), "calling /save_map");
+        norlab_icp_mapper_ros::srv::SaveMap::Response response = rclcpp::call_service<norlab_icp_mapper_ros::srv::SaveMap>("save_map", saveMapRequest);
+        RCLCPP_INFO(this->get_logger(), "/save_map done");
 
         std::rename(mapName.c_str(), req->file_name.data.c_str());
         std::ofstream ltrFile(req->file_name.data, std::ios::app);
@@ -565,14 +546,10 @@ private:
         loadMapRequest->pose.orientation.w = plannedTrajectory.paths[pathIndex].poses[poseIndex].pose.orientation.w;
         loadMapClient->async_send_request(loadMapRequest);
 
-        auto loadMapFuture = loadMapClient->async_send_request(loadMapRequest);
-
-
-        RCLCPP_INFO(this->get_logger(), "A");
-        while (loadMapFuture.wait_for(0.1s) != std::future_status::ready){
-            RCLCPP_INFO(this->get_logger(), "while");
-        }
-        RCLCPP_INFO(this->get_logger(), "B");
+//        auto loadMapFuture = loadMapClient->async_send_request(loadMapRequest);
+        RCLCPP_INFO(this->get_logger(), "calling /load_map");
+        norlab_icp_mapper_ros::srv::LoadMap::Response response = rclcpp::call_service<norlab_icp_mapper_ros::srv::LoadMap>("load_map", loadMapRequest);
+        RCLCPP_INFO(this->get_logger(), "/load_map done");
 
         std::remove("/tmp/map.vtk");
 

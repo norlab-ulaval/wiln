@@ -13,6 +13,7 @@ find_package(nav_msgs REQUIRED)
 find_package(rosidl_default_generators REQUIRED)
 find_package(norlab_icp_mapper_ros REQUIRED)
 find_package(norlab_controllers_msgs REQUIRED)
+find_package(service_caller REQUIRED)
 
 rosidl_generate_interfaces(${PROJECT_NAME}
     "srv/LoadMapTraj.srv"
@@ -33,6 +34,7 @@ ament_target_dependencies(wiln_node
     rclcpp_action
     norlab_icp_mapper_ros
     norlab_controllers_msgs
+    service_caller
 )
 
 rosidl_get_typesupport_target(cpp_typesupport_target ${PROJECT_NAME} "rosidl_typesupport_cpp")
