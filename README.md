@@ -10,8 +10,7 @@ WILN is a teach-and-repeat framework relying on lidar-based navigation to perfor
 
 The WILN system interfaces two libraries/packages: [`libpointmatcher`](https://github.com/norlab-ulaval/libpointmatcher) with [`norlab_icp_mapper`](https://github.com/norlab-ulaval/norlab_icp_mapper) for simultaneous localization and mapping and [`GeRoNa`](https://github.com/cogsys-tuebingen/gerona) for path-following control.
 
-Installation
-------------
+## Installation
 
 ### Setting up libpointmatcher and the mapper
 
