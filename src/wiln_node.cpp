@@ -582,7 +582,7 @@ private:
             return;
         }
 
-        if(plannedTrajectory.paths.empty())
+        if(plannedTrajectory.paths.empty() || plannedTrajectory.paths.front().poses.empty())
         {
             RCLCPP_WARN(this->get_logger(), "Cannot play an empty trajectory.");
             return;
@@ -590,20 +590,23 @@ private:
 
         robotPoseLock.lock();
 
-        double robotPoseToTrajectoryStartDistance = computeEuclideanDistanceBetweenPoses(robotPose, plannedTrajectory.paths.front().poses.front().pose);
-        double robotPoseToTrajectoryEndDistance = computeEuclideanDistanceBetweenPoses(robotPose, plannedTrajectory.paths.back().poses.back().pose);
+        norlab_controllers_msgs::msg::PathSequence trajectory = plannedTrajectory;
+
+        double robotPoseToTrajectoryStartDistance = computeEuclideanDistanceBetweenPoses(robotPose, trajectory.paths.front().poses.front().pose);
+        double robotPoseToTrajectoryEndDistance = computeEuclideanDistanceBetweenPoses(robotPose, trajectory.paths.back().poses.back().pose);
+
         if(robotPoseToTrajectoryEndDistance < robotPoseToTrajectoryStartDistance)
         {
 
-            std::reverse(plannedTrajectory.paths.begin(), plannedTrajectory.paths.end());
-            for(int i = 0; i < plannedTrajectory.paths.size(); ++i)
+            std::reverse(trajectory.paths.begin(), trajectory.paths.end());
+            for(int i = 0; i < trajectory.paths.size(); ++i)
             {
-                std::reverse(plannedTrajectory.paths[i].poses.begin(), plannedTrajectory.paths[i].poses.end());
+                std::reverse(trajectory.paths[i].poses.begin(), trajectory.paths[i].poses.end());
             }
         }
 
         double robotPoseYaw = extractYawFromQuaternion(robotPose.orientation);
-        double trajectoryStartYaw = computeTrajectoryYaw(plannedTrajectory, robotPose);
+        double trajectoryStartYaw = computeTrajectoryYaw(trajectory, robotPose);
         double angleDistance = std::fabs(trajectoryStartYaw - robotPoseYaw);
         if (angleDistance > M_PI)
         {
@@ -612,9 +615,9 @@ private:
 
         if(angleDistance > M_PI_2)
         {
-            for(int i = 0; i < plannedTrajectory.paths.size(); ++i)
+            for(int i = 0; i < trajectory.paths.size(); ++i)
             {
-                plannedTrajectory.paths[i].forward = !plannedTrajectory.paths[i].forward;
+                trajectory.paths[i].forward = !plannedTrajectory.paths[i].forward;
             }
         }
         robotPoseLock.unlock();
@@ -630,13 +633,9 @@ private:
         auto goal_msg = norlab_controllers_msgs::action::FollowPath::Goal();
         goal_msg.follower_options.init_mode.data = 1; // init_mode = 1 : continue
         goal_msg.follower_options.velocity.data = trajectorySpeed;
-        goal_msg.path.header.frame_id = plannedTrajectory.paths.front().poses.front().header.frame_id;
+        goal_msg.path = trajectory;
+        goal_msg.path.header.frame_id = trajectory.paths.front().poses.front().header.frame_id;
         goal_msg.path.header.stamp = this->now();
-
-        for(int i = 0; i < plannedTrajectory.paths.size(); ++i)
-        {
-            goal_msg.path.paths.push_back(plannedTrajectory.paths[i]);
-        }
 
         auto send_goal_options = rclcpp_action::Client<norlab_controllers_msgs::action::FollowPath>::SendGoalOptions();
         send_goal_options.goal_response_callback =
