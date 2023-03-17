@@ -31,6 +31,7 @@ ament_target_dependencies(wiln_node
     std_srvs
     tf2_ros
     tf2
+    tf2_geometry_msgs
     rclcpp_action
     norlab_icp_mapper_ros
     norlab_controllers_msgs
