@@ -86,6 +86,9 @@ public:
 
         plannedTrajectoryPublisher = this->create_publisher<norlab_controllers_msgs::msg::PathSequence>("planned_trajectory", 1000);
         realTrajectoryPublisher = this->create_publisher<norlab_controllers_msgs::msg::PathSequence>("real_trajectory", 1000);
+
+        drivingForward.store(true);
+        lastDrivingDirection.store(true);
     }
 
 private:
@@ -163,13 +166,12 @@ private:
     {
         if(recording)
         {
-            if(plannedTrajectory.paths.empty())
+            if(plannedTrajectory.paths.empty() || lastDrivingDirection.load() != drivingForward.load())
             {
                 norlab_controllers_msgs::msg::DirectionalPath directionalPath;
                 directionalPath.header.frame_id = poseStamped.header.frame_id;
-//                directionalPath.header.stamp = ros::Time::now();
                 directionalPath.header.stamp = this->now();
-                directionalPath.forward = true;
+                directionalPath.forward = drivingForward.load();
                 plannedTrajectory.paths.push_back(directionalPath);
             }
 
@@ -184,15 +186,6 @@ private:
 
             if (distance >= 0.05 || plannedTrajectory.paths.back().poses.empty())
             {
-                if(lastDrivingDirection.load() != drivingForward.load())
-                {
-                    norlab_controllers_msgs::msg::DirectionalPath directionalPath;
-                    directionalPath.header.frame_id = poseStamped.header.frame_id;
-                    directionalPath.header.stamp = this->now();
-                    directionalPath.forward = drivingForward.load();
-                    plannedTrajectory.paths.push_back(directionalPath);
-                }
-
                 plannedTrajectory.paths.back().poses.push_back(poseStamped);
                 plannedTrajectoryPublisher->publish(plannedTrajectory);
                 plannedTrajectory.header.frame_id = poseStamped.header.frame_id;
@@ -206,12 +199,12 @@ private:
     {
         if(playing)
         {
-            if(realTrajectory.paths.empty())
+            if(realTrajectory.paths.empty() || lastDrivingDirection.load() != drivingForward.load())
             {
                 norlab_controllers_msgs::msg::DirectionalPath directionalPath;
                 directionalPath.header.frame_id = poseStamped.header.frame_id;
                 directionalPath.header.stamp = this->now();
-                directionalPath.forward = true;
+                directionalPath.forward = drivingForward.load();
                 realTrajectory.paths.push_back(directionalPath);
             }
 
@@ -226,17 +219,10 @@ private:
 
             if (distance >= 0.05 || realTrajectory.paths.back().poses.empty())
             {
-                if(lastDrivingDirection.load() != drivingForward.load())
-                {
-                    norlab_controllers_msgs::msg::DirectionalPath directionalPath;
-                    directionalPath.header.frame_id = poseStamped.header.frame_id;
-                    directionalPath.header.stamp = this->now();
-                    directionalPath.forward = drivingForward.load();
-                    realTrajectory.paths.push_back(directionalPath);
-                }
-
                 realTrajectory.paths.back().poses.push_back(poseStamped);
                 realTrajectoryPublisher->publish(realTrajectory);
+                realTrajectory.header.frame_id = poseStamped.header.frame_id;
+                realTrajectory.header.stamp = poseStamped.header.stamp;
             }
             lastDrivingDirection.store(drivingForward.load());
         }
