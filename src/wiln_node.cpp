@@ -21,6 +21,16 @@
 #include <rclcpp_action/rclcpp_action.hpp>
 #include <norlab_controllers_msgs/action/follow_path.hpp>
 
+nav_msgs::msg::Path getNavPathFromPathSequence(const norlab_controllers_msgs::msg::PathSequence &pathSequence) {
+    nav_msgs::msg::Path path;
+    path.header = pathSequence.header;
+    for(const geometry_msgs::msg::PoseStamped &poseStamped:pathSequence.paths[0].poses)
+    {
+        path.poses.push_back(poseStamped);
+    }
+    return path;
+}
+
 class WilnNode : public rclcpp::Node
 {
 public:
@@ -545,24 +555,14 @@ private:
 
     void publishPlannedTrajectory()
     {
-        nav_msgs::msg::Path plannedPath;
-        plannedPath.header = plannedTrajectory.header;
-        for(const geometry_msgs::msg::PoseStamped &poseStamped:plannedTrajectory.paths[0].poses)
-        {
-            plannedPath.poses.push_back(poseStamped);
-        }
+        auto plannedPath = getNavPathFromPathSequence(plannedTrajectory);
         plannedTrajectoryPublisher->publish(plannedPath);
     }
 
     void publishRealTrajectory()
     {
-        nav_msgs::msg::Path realPath;
-        realPath.header = realTrajectory.header;
-        for(const geometry_msgs::msg::PoseStamped &poseStamped:realTrajectory.paths[0].poses)
-        {
-            realPath.poses.push_back(poseStamped);
-        }
-        plannedTrajectoryPublisher->publish(realPath);
+        auto realPath = getNavPathFromPathSequence(realTrajectory);
+        realTrajectoryPublisher->publish(realPath);
     }
 
     void loadLTRServiceCallback(const std::shared_ptr<wiln::srv::LoadMapTraj::Request> req, std::shared_ptr<wiln::srv::LoadMapTraj::Response> res)
