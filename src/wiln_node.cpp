@@ -14,11 +14,25 @@
 
 #include <geometry_msgs/msg/twist.hpp>
 #include <nav_msgs/msg/odometry.hpp>
+#include <nav_msgs/msg/path.hpp>
 
 #include <norlab_controllers_msgs/msg/directional_path.hpp>
 #include <norlab_controllers_msgs/msg/path_sequence.hpp>
 #include <rclcpp_action/rclcpp_action.hpp>
 #include <norlab_controllers_msgs/action/follow_path.hpp>
+
+nav_msgs::msg::Path getNavPathFromPathSequence(const norlab_controllers_msgs::msg::PathSequence &pathSequence) {
+    nav_msgs::msg::Path navPath;
+    navPath.header = pathSequence.header;
+    for(const auto &path:pathSequence.paths)
+    {
+        for(const geometry_msgs::msg::PoseStamped &poseStamped:path.poses)
+        {
+            navPath.poses.push_back(poseStamped);
+        }
+    }
+    return navPath;
+}
 
 class WilnNode : public rclcpp::Node
 {
@@ -84,8 +98,8 @@ public:
 //                                                                                                std::bind(&WilnNode::trajectoryResultCallback, this,
 //                                                                                                          std::placeholders::_1));
 
-        plannedTrajectoryPublisher = this->create_publisher<norlab_controllers_msgs::msg::PathSequence>("planned_trajectory", 1000);
-        realTrajectoryPublisher = this->create_publisher<norlab_controllers_msgs::msg::PathSequence>("real_trajectory", 1000);
+        plannedTrajectoryPublisher = this->create_publisher<nav_msgs::msg::Path>("planned_trajectory", 1000);
+        realTrajectoryPublisher = this->create_publisher<nav_msgs::msg::Path>("real_trajectory", 1000);
 
         drivingForward.store(true);
         lastDrivingDirection.store(true);
@@ -147,8 +161,8 @@ private:
 //    rclcpp::Subscription<norlab_controllers_msgs::action::FollowPath::Result>::SharedPtr trajectoryResultSubscription;
 
 
-    rclcpp::Publisher<norlab_controllers_msgs::msg::PathSequence>::SharedPtr plannedTrajectoryPublisher;
-    rclcpp::Publisher<norlab_controllers_msgs::msg::PathSequence>::SharedPtr realTrajectoryPublisher;
+    rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr plannedTrajectoryPublisher;
+    rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr realTrajectoryPublisher;
 
     void odomCallback(const nav_msgs::msg::Odometry& odomIn)
     {
@@ -187,7 +201,7 @@ private:
             if (distance >= 0.05 || plannedTrajectory.paths.back().poses.empty())
             {
                 plannedTrajectory.paths.back().poses.push_back(poseStamped);
-                plannedTrajectoryPublisher->publish(plannedTrajectory);
+                publishPlannedTrajectory();
                 plannedTrajectory.header.frame_id = poseStamped.header.frame_id;
                 plannedTrajectory.header.stamp = poseStamped.header.stamp;
             }
@@ -220,7 +234,7 @@ private:
             if (distance >= 0.05 || realTrajectory.paths.back().poses.empty())
             {
                 realTrajectory.paths.back().poses.push_back(poseStamped);
-                realTrajectoryPublisher->publish(realTrajectory);
+                publishRealTrajectory();
                 realTrajectory.header.frame_id = poseStamped.header.frame_id;
                 realTrajectory.header.stamp = poseStamped.header.stamp;
             }
@@ -539,7 +553,19 @@ private:
 
         std::remove("/tmp/map.vtk");
 
-        plannedTrajectoryPublisher->publish(plannedTrajectory);
+        publishPlannedTrajectory();
+    }
+
+    void publishPlannedTrajectory()
+    {
+        auto plannedPath = getNavPathFromPathSequence(plannedTrajectory);
+        plannedTrajectoryPublisher->publish(plannedPath);
+    }
+
+    void publishRealTrajectory()
+    {
+        auto realPath = getNavPathFromPathSequence(realTrajectory);
+        realTrajectoryPublisher->publish(realPath);
     }
 
     void loadLTRServiceCallback(const std::shared_ptr<wiln::srv::LoadMapTraj::Request> req, std::shared_ptr<wiln::srv::LoadMapTraj::Response> res)
