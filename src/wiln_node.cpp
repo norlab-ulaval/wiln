@@ -22,13 +22,16 @@
 #include <norlab_controllers_msgs/action/follow_path.hpp>
 
 nav_msgs::msg::Path getNavPathFromPathSequence(const norlab_controllers_msgs::msg::PathSequence &pathSequence) {
-    nav_msgs::msg::Path path;
-    path.header = pathSequence.header;
-    for(const geometry_msgs::msg::PoseStamped &poseStamped:pathSequence.paths[0].poses)
+    nav_msgs::msg::Path navPath;
+    navPath.header = pathSequence.header;
+    for(const auto &path:pathSequence.paths)
     {
-        path.poses.push_back(poseStamped);
+        for(const geometry_msgs::msg::PoseStamped &poseStamped:path.poses)
+        {
+            navPath.poses.push_back(poseStamped);
+        }
     }
-    return path;
+    return navPath;
 }
 
 class WilnNode : public rclcpp::Node
