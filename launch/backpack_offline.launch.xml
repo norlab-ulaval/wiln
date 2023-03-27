@@ -1,0 +1,19 @@
+<launch>
+    <set_parameter name="use_sim_time" value="true" />
+
+    <node pkg="odom_to_pose_converter" exec="odom_to_pose_converter_node" name="odom_to_pose_converter_node" output="screen">
+        <remap from="odom_in" to="icp_odom" />
+        <remap from="pose_out" to="pose" />
+    </node>
+
+    <node pkg="wiln" exec="wiln_node" name="wiln_node" output="screen">
+        <remap from="pose_in" to="pose" />
+        <remap from="odom_in" to="icp_odom" />
+        <remap from="cmd_vel_in" to="/twist_mux/cmd_vel" />
+        <param name="trajectory_speed" value="4.0" />
+        <param name="low_pass_window_size" value="5" />
+        <remap from="planned_trajectory" to="planned_trajectory_test" />
+        <remap from="real_trajectory" to="real_trajectory_test" />
+    </node>
+
+</launch>
