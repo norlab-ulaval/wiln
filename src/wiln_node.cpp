@@ -638,8 +638,8 @@ private:
 
         realTrajectory.paths.clear();
 
-        auto enableMappingRequest = std::make_shared<std_srvs::srv::Empty::Request>();
-        enableMappingClient->async_send_request(enableMappingRequest);
+        auto disableMappingRequest = std::make_shared<std_srvs::srv::Empty::Request>();
+        disableMappingClient->async_send_request(disableMappingRequest);
 
         // TODO: validate action call
         auto goal_msg = norlab_controllers_msgs::action::FollowPath::Goal();
