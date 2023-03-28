@@ -550,6 +550,10 @@ private:
         loadMapClient->async_send_request(loadMapRequest);
 
 //        auto loadMapFuture = loadMapClient->async_send_request(loadMapRequest);
+
+        auto disableMappingRequest = std::make_shared<std_srvs::srv::Empty::Request>();
+        disableMappingClient->async_send_request(disableMappingRequest);
+
         RCLCPP_INFO(this->get_logger(), "calling /load_map");
         norlab_icp_mapper_ros::srv::LoadMap::Response response = rclcpp::call_service<norlab_icp_mapper_ros::srv::LoadMap>("load_map", loadMapRequest);
         RCLCPP_INFO(this->get_logger(), "/load_map done");
