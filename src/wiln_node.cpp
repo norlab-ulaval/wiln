@@ -610,8 +610,8 @@ private:
         double robotPoseToTrajectoryStartDistance = computeEuclideanDistanceBetweenPoses(robotPose, trajectory.paths.front().poses.front().pose);
         double robotPoseToTrajectoryEndDistance = computeEuclideanDistanceBetweenPoses(robotPose, trajectory.paths.back().poses.back().pose);
 
-        RCLCPP_INFO_STREAM(this->get_logger(), "distance to start "<<robotPoseToTrajectoryStartDistance)
-        RCLCPP_INFO_STREAM(this->get_logger(), "distance to end "<<robotPoseToTrajectoryEndDistance)
+        RCLCPP_INFO_STREAM(this->get_logger(), "distance to start "<<robotPoseToTrajectoryStartDistance);
+        RCLCPP_INFO_STREAM(this->get_logger(), "distance to end "<<robotPoseToTrajectoryEndDistance);
 
         if(robotPoseToTrajectoryEndDistance < robotPoseToTrajectoryStartDistance)
         {
