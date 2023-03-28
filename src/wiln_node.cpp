@@ -199,6 +199,11 @@ private:
             if(plannedTrajectory.paths.empty() || lastDrivingDirection.load() != drivingForward.load() ||
                std::fabs(computeAngleBetweenPoses(plannedTrajectory.paths.back().poses.back(), poseStamped)) > 0.5)
             {
+                if(plannedTrajectory.paths.empty())
+                {
+                    plannedTrajectory.header.frame_id = poseStamped.header.frame_id;
+                    plannedTrajectory.header.stamp = this->now();
+                }
                 norlab_controllers_msgs::msg::DirectionalPath directionalPath;
                 directionalPath.header.frame_id = poseStamped.header.frame_id;
                 directionalPath.header.stamp = this->now();
@@ -233,6 +238,11 @@ private:
             if(realTrajectory.paths.empty() || lastDrivingDirection.load() != drivingForward.load() ||
                std::fabs(computeAngleBetweenPoses(realTrajectory.paths.back().poses.back(), poseStamped)) > 0.5)
             {
+                if(realTrajectory.paths.empty())
+                {
+                    realTrajectory.header.frame_id = poseStamped.header.frame_id;
+                    realTrajectory.header.stamp = this->now();
+                }
                 norlab_controllers_msgs::msg::DirectionalPath directionalPath;
                 directionalPath.header.frame_id = poseStamped.header.frame_id;
                 directionalPath.header.stamp = this->now();
@@ -476,6 +486,8 @@ private:
                 {
                     std::getline(ltrFile, line);
                     pathFrameId = line.substr(FRAME_ID_START_POSITION);
+                    plannedTrajectory.header.frame_id = pathFrameId;
+                    plannedTrajectory.header.stamp = this->now();
                     parsingMap = false;
                 }
                 else
