@@ -4,6 +4,7 @@
 #include <std_srvs/srv/empty.hpp>
 #include <geometry_msgs/msg/pose_stamped.hpp>
 #include <tf2/LinearMath/Quaternion.h>
+#include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 
 #include <wiln/srv/save_map_traj.hpp>
 #include <wiln/srv/load_map_traj.hpp>
@@ -21,18 +22,7 @@
 #include <rclcpp_action/rclcpp_action.hpp>
 #include <norlab_controllers_msgs/action/follow_path.hpp>
 
-nav_msgs::msg::Path getNavPathFromPathSequence(const norlab_controllers_msgs::msg::PathSequence &pathSequence) {
-    nav_msgs::msg::Path navPath;
-    navPath.header = pathSequence.header;
-    for(const auto &path:pathSequence.paths)
-    {
-        for(const geometry_msgs::msg::PoseStamped &poseStamped:path.poses)
-        {
-            navPath.poses.push_back(poseStamped);
-        }
-    }
-    return navPath;
-}
+tf2::Quaternion HALF_TURN_ROTATION(0.0, 0.0, 1.0, 0.0);
 
 class WilnNode : public rclcpp::Node
 {
@@ -634,11 +624,17 @@ private:
 
         if(robotPoseToTrajectoryEndDistance < robotPoseToTrajectoryStartDistance)
         {
+            tf2::Quaternion robotOrientation;
 
             std::reverse(trajectory.paths.begin(), trajectory.paths.end());
             for(int i = 0; i < trajectory.paths.size(); ++i)
             {
                 std::reverse(trajectory.paths[i].poses.begin(), trajectory.paths[i].poses.end());
+                for(int j = 0; j < trajectory.paths[i].poses.size(); ++j)
+                {
+                    tf2::fromMsg(trajectory.paths[i].poses[j].pose.orientation, robotOrientation);
+                    trajectory.paths[i].poses[j].pose.orientation = tf2::toMsg((HALF_TURN_ROTATION * robotOrientation).normalized());
+                }
             }
         }
 
@@ -652,9 +648,16 @@ private:
 
         if(angleDistance > M_PI_2)
         {
+            tf2::Quaternion robotOrientation;
+
             for(int i = 0; i < trajectory.paths.size(); ++i)
             {
                 trajectory.paths[i].forward = !plannedTrajectory.paths[i].forward;
+                for(int j = 0; j < trajectory.paths[i].poses.size(); ++j)
+                {
+                    tf2::fromMsg(trajectory.paths[i].poses[j].pose.orientation, robotOrientation);
+                    trajectory.paths[i].poses[j].pose.orientation = tf2::toMsg((HALF_TURN_ROTATION * robotOrientation).normalized());
+                }
             }
         }
         robotPoseLock.unlock();
@@ -802,6 +805,20 @@ private:
                 std::bind(&WilnNode::trajectoryResultCallback, this, std::placeholders::_1);
         followPathClient->async_send_goal(goal_msg);
         return;
+    }
+
+    nav_msgs::msg::Path getNavPathFromPathSequence(const norlab_controllers_msgs::msg::PathSequence& pathSequence)
+    {
+        nav_msgs::msg::Path navPath;
+        navPath.header = pathSequence.header;
+        for(const auto& path: pathSequence.paths)
+        {
+            for(const geometry_msgs::msg::PoseStamped& poseStamped: path.poses)
+            {
+                navPath.poses.push_back(poseStamped);
+            }
+        }
+        return navPath;
     }
 };
 
