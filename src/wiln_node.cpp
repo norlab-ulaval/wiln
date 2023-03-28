@@ -452,6 +452,7 @@ private:
     void loadLTR(std::string fileName, bool fromEnd)
     {
         using namespace std::chrono_literals;
+        plannedTrajectory.paths.clear();
         std::ofstream mapFile("/tmp/map.vtk");
         std::ifstream ltrFile(fileName);
         std::string line;
@@ -494,6 +495,8 @@ private:
                 }
 
                 geometry_msgs::msg::PoseStamped pose;
+                pose.header.frame_id = pathFrameId;
+                pose.header.stamp = this->now();
                 int cursorPosition = line.find(",");
                 pose.pose.position.x = std::stod(line.substr(0, cursorPosition));
                 int previousCursorPosition = cursorPosition + 1;
