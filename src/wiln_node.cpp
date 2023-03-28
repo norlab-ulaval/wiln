@@ -87,9 +87,10 @@ public:
 //        trajectoryResultSubscription = this->create_subscription<norlab_controllers_msgs::action::FollowPath::Result>("follow_path/result", 1000,
 //                                                                                                std::bind(&WilnNode::trajectoryResultCallback, this,
 //                                                                                                          std::placeholders::_1));
-
-        plannedTrajectoryPublisher = this->create_publisher<nav_msgs::msg::Path>("planned_trajectory", 1000);
-        realTrajectoryPublisher = this->create_publisher<nav_msgs::msg::Path>("real_trajectory", 1000);
+        auto publisher_qos = rclcpp::QoS(10);
+        publisher_qos.transient_local();
+        plannedTrajectoryPublisher = this->create_publisher<nav_msgs::msg::Path>("planned_trajectory", publisher_qos);
+        realTrajectoryPublisher = this->create_publisher<nav_msgs::msg::Path>("real_trajectory", publisher_qos);
 
         drivingForward.store(true);
         lastDrivingDirection.store(true);
