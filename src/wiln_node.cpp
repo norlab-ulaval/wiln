@@ -5,6 +5,7 @@
 #include <geometry_msgs/msg/pose_stamped.hpp>
 #include <tf2/LinearMath/Quaternion.h>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
+#include <string>
 
 #include <wiln/srv/save_map_traj.hpp>
 #include <wiln/srv/load_map_traj.hpp>
@@ -16,6 +17,7 @@
 #include <geometry_msgs/msg/twist.hpp>
 #include <nav_msgs/msg/odometry.hpp>
 #include <nav_msgs/msg/path.hpp>
+#include <std_msgs/msg/string.hpp>
 
 #include <norlab_controllers_msgs/msg/directional_path.hpp>
 #include <norlab_controllers_msgs/msg/path_sequence.hpp>
@@ -92,6 +94,8 @@ public:
         plannedTrajectoryPublisher = this->create_publisher<nav_msgs::msg::Path>("planned_trajectory", publisher_qos);
         realTrajectoryPublisher = this->create_publisher<nav_msgs::msg::Path>("real_trajectory", publisher_qos);
 
+        statusPublisher = this->create_publisher<std_msgs::msg::String>("status", publisher_qos);
+
         drivingForward.store(true);
         lastDrivingDirection.store(true);
     }
@@ -154,6 +158,8 @@ private:
 
     rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr plannedTrajectoryPublisher;
     rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr realTrajectoryPublisher;
+    rclcpp::Publisher<std_msgs::msg::Path>::SharedPtr statusPublisher;
+
 
     void odomCallback(const nav_msgs::msg::Odometry& odomIn)
     {
@@ -612,6 +618,18 @@ private:
     {
         auto realPath = getNavPathFromPathSequence(realTrajectory);
         realTrajectoryPublisher->publish(realPath);
+    }
+
+    /**
+     * @brief Publish WILN status
+     *
+     * @param status A String that contains the status
+     */
+    void publishStatus(const std::string& status)
+    {
+        auto statusMsg = std_msgs::msg::String();
+        statusMsg.data = status;
+        statusPublisher->publish(statusMsg);
     }
 
     void loadLTRServiceCallback(const std::shared_ptr<wiln::srv::LoadMapTraj::Request> req, std::shared_ptr<wiln::srv::LoadMapTraj::Response> res)
