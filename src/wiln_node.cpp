@@ -348,6 +348,8 @@ private:
 
         recording = true;
 
+        publishStatus("TEACHING");
+
         auto enableMappingRequest = std::make_shared<std_srvs::srv::Empty::Request>();
         enableMappingClient->async_send_request(enableMappingRequest);
         return;
@@ -393,12 +395,18 @@ private:
         }
 
         recording = false;
+
+        publishStatus("IDLE:STOPPED");
+
         return;
     }
 
     void clearTrajectoryServiceCallback(const std::shared_ptr<std_srvs::srv::Empty::Request> req, std::shared_ptr<std_srvs::srv::Empty::Response> res)
     {
         plannedTrajectory.paths.clear();
+
+        publishStatus("IDLE:CLEARED TRAJECTORY");
+
         return;
     }
 
@@ -417,6 +425,7 @@ private:
         }
 
         playing = false;
+        publishStatus("IDLE:CANCELED TRAJECTORY");
 
         // TODO: validate action call here
         followPathClient->async_cancel_all_goals();
@@ -460,7 +469,8 @@ private:
         //TODO: force save to same working repository as mapper
         using namespace std::chrono_literals;
         auto saveMapRequest = std::make_shared<norlab_icp_mapper_ros::srv::SaveMap::Request>();
-        std::string mapName = req->file_name.data.substr(0, req->file_name.data.rfind('.')) + ".vtk";
+        std::string mapNameStem = req->file_name.data.substr(0, req->file_name.data.rfind('.'));
+        std::string mapName = mapNameStem + ".vtk";
         saveMapRequest->map_file_name.data = mapName;
 //        auto saveMapFuture = saveMapClient->async_send_request(saveMapRequest);
 //        std::shared_ptr<norlab_icp_mapper_ros::srv::SaveMap::Request> request = std::make_shared<norlab_icp_mapper_ros::srv::SaveMap::Request>();
@@ -665,6 +675,8 @@ private:
         }
 
         robotPoseLock.lock();
+
+        publishStatus("REPEATING");
 
         norlab_controllers_msgs::msg::PathSequence trajectory = plannedTrajectory;
 
