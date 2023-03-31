@@ -396,7 +396,7 @@ private:
 
         recording = false;
 
-        publishStatus("IDLE:STOPPED");
+        publishStatus("IDLE: Stopped Recording");
 
         return;
     }
@@ -405,7 +405,7 @@ private:
     {
         plannedTrajectory.paths.clear();
 
-        publishStatus("IDLE:CLEARED TRAJECTORY");
+        publishStatus("IDLE: Cleared Trajectory");
 
         return;
     }
@@ -413,6 +413,7 @@ private:
     void smoothTrajectoryServiceCallback(const std::shared_ptr<std_srvs::srv::Empty::Request> req, std::shared_ptr<std_srvs::srv::Empty::Response> res)
     {
         plannedTrajectory = smoothTrajectoryLowPass(plannedTrajectory);
+        RCLCPP_INFO(this->get_logger(), "Trajectory has been smoothened");
         return;
     }
 
@@ -425,7 +426,7 @@ private:
         }
 
         playing = false;
-        publishStatus("IDLE:CANCELED TRAJECTORY");
+        publishStatus("IDLE: Canceled Trajectory");
 
         // TODO: validate action call here
         followPathClient->async_cancel_all_goals();
@@ -645,12 +646,14 @@ private:
     void loadLTRServiceCallback(const std::shared_ptr<wiln::srv::LoadMapTraj::Request> req, std::shared_ptr<wiln::srv::LoadMapTraj::Response> res)
     {
         loadLTR(req->file_name.data, false);
+        publishStatus("IDLE: Loaded LTR");
         return;
     }
 
     void loadLTRFromEndServiceCallback(const std::shared_ptr<wiln::srv::LoadMapTraj::Request> req, std::shared_ptr<wiln::srv::LoadMapTraj::Response> res)
     {
         loadLTR(req->file_name.data, true);
+        publishStatus("IDLE: Loaded LTR From End");
         return;
     }
 
@@ -801,6 +804,7 @@ private:
         }
 
         playing = true;
+        publishStatus("REPEATING: Loop");
 
         realTrajectory.paths.clear();
 
