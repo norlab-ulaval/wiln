@@ -128,7 +128,7 @@ private:
     float delayBetweenWaypoints;
 
     float trajectorySpeed;
-    int lowPassFilterWindowSize;
+    int lowPassFilterWindowSize = 5;
 
     //    const std::map<int8_t, std::string> FOLLOW_PATH_RESULTS = {
 //            { 0u, "RESULT_STATUS_STOPPED_BY_SUPERVISOR" },
