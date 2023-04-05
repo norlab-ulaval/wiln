@@ -7,7 +7,6 @@
 	<node pkg="wiln" exec="wiln_node" name="wiln_node" output="screen">
 		<remap from="pose_in" to="pose" />
 		<remap from="cmd_vel_in" to="warthog_velocity_controller/cmd_vel" />
-		<param name="trajectory_speed" value="0.5" />
 		<param name="low_pass_window_size" value="5" />
 		<remap from="planned_trajectory" to="planned_trajectory_test" />
 		<remap from="real_trajectory" to="real_trajectory_test" />

@@ -129,8 +129,6 @@ private:
 
     const std::string TRAJECTORY_DELIMITER = "#############################";
     float delayBetweenWaypoints;
-
-    float trajectorySpeed;
     int lowPassFilterWindowSize;
 
     //    const std::map<int8_t, std::string> FOLLOW_PATH_RESULTS = {
@@ -709,7 +707,6 @@ private:
         // TODO: validate action call
         auto goal_msg = norlab_controllers_msgs::action::FollowPath::Goal();
         goal_msg.follower_options.init_mode.data = 1; // init_mode = 1 : continue
-        goal_msg.follower_options.velocity.data = trajectorySpeed;
         goal_msg.path = trajectory;
         goal_msg.path.header.frame_id = trajectory.paths.front().poses.front().header.frame_id;
         goal_msg.path.header.stamp = this->now();
@@ -783,7 +780,6 @@ private:
         // TODO: validate action call
         auto goal_msg = norlab_controllers_msgs::action::FollowPath::Goal();
         goal_msg.follower_options.init_mode.data = 1; // init_mode = 1 : continue
-        goal_msg.follower_options.velocity.data = trajectorySpeed;
         goal_msg.path.header.frame_id = plannedTrajectory.paths.front().poses.front().header.frame_id;
         goal_msg.path.header.stamp = this->now();
         for(int i = 0; i < firstLoopTrajectory.paths.size(); ++i)
