@@ -32,6 +32,9 @@ public:
     {
         using FollowPath = norlab_controllers_msgs::action::FollowPath;
 
+        this->declare_parameter<int>("low_pass_window_size", 5);
+        this->get_parameter("low_pass_window_size", lowPassFilterWindowSize);
+
         // TODO: Create service clients to call enable_mapping, disable_mapping, save_map and load_map
 
         startRecordingService = this->create_service<std_srvs::srv::Empty>("start_recording",
@@ -128,7 +131,7 @@ private:
     float delayBetweenWaypoints;
 
     float trajectorySpeed;
-    int lowPassFilterWindowSize = 5;
+    int lowPassFilterWindowSize;
 
     //    const std::map<int8_t, std::string> FOLLOW_PATH_RESULTS = {
 //            { 0u, "RESULT_STATUS_STOPPED_BY_SUPERVISOR" },
