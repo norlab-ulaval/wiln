@@ -253,18 +253,18 @@ private:
                 realTrajectory.paths.push_back(directionalPath);
                 publishRealTrajectory();
             }
-            else if(std::fabs(computeAngleBetweenPoses(realTrajectory.paths.back().poses.back(), poseStamped)) > 0.5)
-            {
-                norlab_controllers_msgs::msg::DirectionalPath directionalPath;
-                directionalPath.header.frame_id = poseStamped.header.frame_id;
-                directionalPath.header.stamp = this->now();
-                directionalPath.forward = drivingForward.load();
-                geometry_msgs::msg::PoseStamped rotatedPose = poseStamped;
-                rotatedPose.pose.position = realTrajectory.paths.back().poses.back().pose.position;
-                directionalPath.poses.push_back(rotatedPose);
-                realTrajectory.paths.push_back(directionalPath);
-                publishRealTrajectory();
-            }
+//            else if(std::fabs(computeAngleBetweenPoses(realTrajectory.paths.back().poses.back(), poseStamped)) > 0.5)
+//            {
+//                norlab_controllers_msgs::msg::DirectionalPath directionalPath;
+//                directionalPath.header.frame_id = poseStamped.header.frame_id;
+//                directionalPath.header.stamp = this->now();
+//                directionalPath.forward = drivingForward.load();
+//                geometry_msgs::msg::PoseStamped rotatedPose = poseStamped;
+//                rotatedPose.pose.position = realTrajectory.paths.back().poses.back().pose.position;
+//                directionalPath.poses.push_back(rotatedPose);
+//                realTrajectory.paths.push_back(directionalPath);
+//                publishRealTrajectory();
+//            }
             else if(lastDrivingDirection.load() != drivingForward.load())
             {
                 norlab_controllers_msgs::msg::DirectionalPath directionalPath;
