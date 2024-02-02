@@ -5,6 +5,7 @@
 #include <geometry_msgs/msg/pose_stamped.hpp>
 #include <tf2/LinearMath/Quaternion.h>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
+#include <string>
 
 #include <wiln/srv/save_map_traj.hpp>
 #include <wiln/srv/load_map_traj.hpp>
@@ -16,6 +17,7 @@
 #include <geometry_msgs/msg/twist.hpp>
 #include <nav_msgs/msg/odometry.hpp>
 #include <nav_msgs/msg/path.hpp>
+#include <std_msgs/msg/string.hpp>
 
 #include <norlab_controllers_msgs/msg/directional_path.hpp>
 #include <norlab_controllers_msgs/msg/path_sequence.hpp>
@@ -92,6 +94,8 @@ public:
         plannedTrajectoryPublisher = this->create_publisher<nav_msgs::msg::Path>("planned_trajectory", publisher_qos);
         realTrajectoryPublisher = this->create_publisher<nav_msgs::msg::Path>("real_trajectory", publisher_qos);
 
+        statusPublisher = this->create_publisher<std_msgs::msg::String>("status", publisher_qos);
+
         drivingForward.store(true);
         lastDrivingDirection.store(true);
     }
@@ -154,6 +158,8 @@ private:
 
     rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr plannedTrajectoryPublisher;
     rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr realTrajectoryPublisher;
+    rclcpp::Publisher<std_msgs::msg::Path>::SharedPtr statusPublisher;
+
 
     void odomCallback(const nav_msgs::msg::Odometry& odomIn)
     {
@@ -342,6 +348,8 @@ private:
 
         recording = true;
 
+        publishStatus("TEACHING");
+
         auto enableMappingRequest = std::make_shared<std_srvs::srv::Empty::Request>();
         enableMappingClient->async_send_request(enableMappingRequest);
         return;
@@ -387,18 +395,25 @@ private:
         }
 
         recording = false;
+
+        publishStatus("IDLE: Stopped Recording");
+
         return;
     }
 
     void clearTrajectoryServiceCallback(const std::shared_ptr<std_srvs::srv::Empty::Request> req, std::shared_ptr<std_srvs::srv::Empty::Response> res)
     {
         plannedTrajectory.paths.clear();
+
+        publishStatus("IDLE: Cleared Trajectory");
+
         return;
     }
 
     void smoothTrajectoryServiceCallback(const std::shared_ptr<std_srvs::srv::Empty::Request> req, std::shared_ptr<std_srvs::srv::Empty::Response> res)
     {
         plannedTrajectory = smoothTrajectoryLowPass(plannedTrajectory);
+        RCLCPP_INFO(this->get_logger(), "Trajectory has been smoothened");
         return;
     }
 
@@ -411,6 +426,7 @@ private:
         }
 
         playing = false;
+        publishStatus("IDLE: Canceled Trajectory");
 
         // TODO: validate action call here
         followPathClient->async_cancel_all_goals();
@@ -454,7 +470,8 @@ private:
         //TODO: force save to same working repository as mapper
         using namespace std::chrono_literals;
         auto saveMapRequest = std::make_shared<norlab_icp_mapper_ros::srv::SaveMap::Request>();
-        std::string mapName = req->file_name.data.substr(0, req->file_name.data.rfind('.')) + ".vtk";
+        std::string mapNameStem = req->file_name.data.substr(0, req->file_name.data.rfind('.'));
+        std::string mapName = mapNameStem + ".vtk";
         saveMapRequest->map_file_name.data = mapName;
 //        auto saveMapFuture = saveMapClient->async_send_request(saveMapRequest);
 //        std::shared_ptr<norlab_icp_mapper_ros::srv::SaveMap::Request> request = std::make_shared<norlab_icp_mapper_ros::srv::SaveMap::Request>();
@@ -614,15 +631,29 @@ private:
         realTrajectoryPublisher->publish(realPath);
     }
 
+    /**
+     * @brief Publish WILN status
+     *
+     * @param status A String that contains the status
+     */
+    void publishStatus(const std::string& status)
+    {
+        auto statusMsg = std_msgs::msg::String();
+        statusMsg.data = status;
+        statusPublisher->publish(statusMsg);
+    }
+
     void loadLTRServiceCallback(const std::shared_ptr<wiln::srv::LoadMapTraj::Request> req, std::shared_ptr<wiln::srv::LoadMapTraj::Response> res)
     {
         loadLTR(req->file_name.data, false);
+        publishStatus("IDLE: Loaded LTR");
         return;
     }
 
     void loadLTRFromEndServiceCallback(const std::shared_ptr<wiln::srv::LoadMapTraj::Request> req, std::shared_ptr<wiln::srv::LoadMapTraj::Response> res)
     {
         loadLTR(req->file_name.data, true);
+        publishStatus("IDLE: Loaded LTR From End");
         return;
     }
 
@@ -647,6 +678,8 @@ private:
         }
 
         robotPoseLock.lock();
+
+        publishStatus("REPEATING");
 
         norlab_controllers_msgs::msg::PathSequence trajectory = plannedTrajectory;
 
@@ -771,6 +804,7 @@ private:
         }
 
         playing = true;
+        publishStatus("REPEATING: Loop");
 
         realTrajectory.paths.clear();
 
