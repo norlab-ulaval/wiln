@@ -837,7 +837,7 @@ private:
                 std::bind(&WilnNode::trajectoryFeedbackCallback, this, std::placeholders::_1, std::placeholders::_2);
         send_goal_options.result_callback =
                 std::bind(&WilnNode::trajectoryResultCallback, this, std::placeholders::_1);
-        followPathClient->async_send_goal(goal_msg);
+        followPathClient->async_send_goal(goal_msg, send_goal_options);
         return;
     }
 
