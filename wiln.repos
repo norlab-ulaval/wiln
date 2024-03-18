@@ -1,0 +1,25 @@
+repositories:
+  wiln:
+    type: git
+    url: git@github.com:norlab-ulaval/wiln.git
+    version: humble
+  libpointmatcher_ros:
+    type: git
+    url: git@github.com:norlab-ulaval/libpointmatcher_ros.git
+    version: humble
+  norlab_controllers_ros:
+    type: git
+    url: git@github.com:norlab-ulaval/norlab_controllers_ros.git
+    version: humble
+  norlab_icp_mapper_ros:
+    type: git
+    url: git@github.com:norlab-ulaval/norlab_icp_mapper_ros.git
+    version: humble
+  pointcloud_motion_deskew:
+    type: git
+    url: git@github.com:norlab-ulaval/pointcloud_motion_deskew.git
+    version: humble
+  service_caller:
+    type: git
+    url: git@github.com:norlab-ulaval/service_caller.git
+    version: master
