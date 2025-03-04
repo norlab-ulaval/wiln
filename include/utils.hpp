@@ -95,13 +95,18 @@ nav_msgs::msg::Path smoothPathLowPass(const nav_msgs::msg::Path &roughPath, int 
 nav_msgs::msg::Path removePathOverlap(const nav_msgs::msg::Path &loopPath)
 {
     nav_msgs::msg::Path cutLoopPath(loopPath);
-    for (auto last = cutLoopPath.poses.end() - 1; last != cutLoopPath.poses.begin(); --last)
+    
+    auto first_itr = cutLoopPath.poses.begin();
+    auto last_pose = std::prev(cutLoopPath.poses.end())->pose;
+
+    while (cutLoopPath.poses.size() > 2)
     {
-        auto [lin_dist1, ang_dist1] = diffBetweenPoses(last->pose, cutLoopPath.poses.begin()->pose);
-        auto [lin_dist2, ang_dist2] = diffBetweenPoses(last->pose, (cutLoopPath.poses.begin() + 1)->pose);
+        auto [lin_dist1, ang_dist1] = diffBetweenPoses(last_pose, first_itr->pose);
+        auto [lin_dist2, ang_dist2] = diffBetweenPoses(last_pose, std::next(first_itr)->pose);
+
         if (lin_dist1 > lin_dist2)
         {
-            cutLoopPath.poses.erase(last);
+            first_itr = cutLoopPath.poses.erase(first_itr);
         }
         else
         {

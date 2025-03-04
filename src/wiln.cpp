@@ -552,6 +552,7 @@ void WilnNode::playLoopServiceCallback(const std::shared_ptr<wiln::srv::PlayLoop
     {
         case State::IDLE:
         {
+            RCLCPP_WARN(this->get_logger(), "Playing loop %d times.", req->nb_loops.data);
             playLoop(req->nb_loops.data);
             currentState = State::PLAYING;
             break;
@@ -572,15 +573,16 @@ void WilnNode::playLoopServiceCallback(const std::shared_ptr<wiln::srv::PlayLoop
 void WilnNode::playLoop(int nbLoops)
 {
     robotPoseLock.lock();
-    nav_msgs::msg::Path loopTrajectory(plannedTrajectory);
+    nav_msgs::msg::Path loopTrajectory;
 
     // Remove overlapping poses
-    auto cleanTrajectory = removePathOverlap(loopTrajectory);
+    auto cleanTrajectory = removePathOverlap(plannedTrajectory);
+    RCLCPP_INFO(this->get_logger(), "Removed %ld overlapping points at the start.", plannedTrajectory.poses.size() - cleanTrajectory.poses.size());
 
     // Repeat trajectory X times
-    for (int i = 0; i < nbLoops - 1; ++i)
+    for (int i = 0; i < nbLoops; ++i)
     {
-        loopTrajectory.poses.insert(loopTrajectory.poses.end(), plannedTrajectory.poses.begin(), plannedTrajectory.poses.end());
+        loopTrajectory.poses.insert(loopTrajectory.poses.end(), cleanTrajectory.poses.begin(), cleanTrajectory.poses.end());
     }
 
     robotPoseLock.unlock();
