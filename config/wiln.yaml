@@ -1,0 +1,8 @@
+/**:
+  wiln_node:
+    ros__parameters:
+      odom_topic: "/mapping/icp_odom"
+      distance_between_waypoints: 0.1
+      angle_between_waypoints: 0.1
+      trajectory_speed: 1.5
+      smoothing_window_size: 9
