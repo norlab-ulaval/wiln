@@ -97,8 +97,8 @@ nav_msgs::msg::Path removePathOverlap(const nav_msgs::msg::Path &loopPath)
     nav_msgs::msg::Path cutLoopPath(loopPath);
     for (auto last = cutLoopPath.poses.end() - 1; last != cutLoopPath.poses.begin(); --last)
     {
-        auto [lin_dist1, ang_dist1] = diffBetweenPoses((*last).pose, (*cutLoopPath.poses.begin()).pose);
-        auto [lin_dist2, ang_dist2] = diffBetweenPoses((*last).pose, (*(cutLoopPath.poses.begin() + 1)).pose);
+        auto [lin_dist1, ang_dist1] = diffBetweenPoses(last->pose, cutLoopPath.poses.begin()->pose);
+        auto [lin_dist2, ang_dist2] = diffBetweenPoses(last->pose, (cutLoopPath.poses.begin() + 1)->pose);
         if (lin_dist1 > lin_dist2)
         {
             cutLoopPath.poses.erase(last);
