@@ -100,10 +100,10 @@ void WilnNode::initServices()
 
 void WilnNode::initClients()
 {
-    enableMappingClient = this->create_client<std_srvs::srv::Empty>("enable_mapping");
-    disableMappingClient = this->create_client<std_srvs::srv::Empty>("disable_mapping");
-    saveMapClient = this->create_client<norlab_icp_mapper_ros::srv::SaveMap>("save_map");
-    loadMapClient = this->create_client<norlab_icp_mapper_ros::srv::LoadMap>("load_map");
+    enableMappingClient = this->create_client<std_srvs::srv::Empty>("/mapping/enable_mapping");
+    disableMappingClient = this->create_client<std_srvs::srv::Empty>("/mapping/disable_mapping");
+    saveMapClient = this->create_client<norlab_icp_mapper_ros::srv::SaveMap>("/mapping/save_map");
+    loadMapClient = this->create_client<norlab_icp_mapper_ros::srv::LoadMap>("/mapping/load_map");
     followPathClient = rclcpp_action::create_client<norlab_controllers_msgs::action::FollowPath>(this, "/follow_path");
 }
 
@@ -572,7 +572,7 @@ void WilnNode::playLoopServiceCallback(const std::shared_ptr<wiln::srv::PlayLoop
 void WilnNode::playLoop(int nbLoops)
 {
     robotPoseLock.lock();
-    nav_msgs::msg::Path loopTrajectory;
+    nav_msgs::msg::Path loopTrajectory(plannedTrajectory);
 
     // Remove overlapping poses
     auto cleanTrajectory = removePathOverlap(loopTrajectory);
