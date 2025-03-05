@@ -8,7 +8,6 @@ using namespace std::chrono_literals;
 
 WilnNode::WilnNode() : Node("wiln_node"), currentState(State::IDLE)
 {
-    // TODO: Add a publisher for the state
     initParameters();
     initSubscribers();
     initPublishers();
@@ -331,19 +330,52 @@ void WilnNode::cancelTrajectoryServiceCallback(const std::shared_ptr<std_srvs::s
 
 void WilnNode::saveLTRServiceCallback(const std::shared_ptr<wiln::srv::SaveMapTraj::Request> req, std::shared_ptr<wiln::srv::SaveMapTraj::Response> res)
 {
-    // TODO: force save to same working repository as mapper
-    using namespace std::chrono_literals;
-    auto saveMapRequest = std::make_shared<norlab_icp_mapper_ros::srv::SaveMap::Request>();
-    std::string mapName = req->file_name.data.substr(0, req->file_name.data.rfind('.')) + ".vtk";
-    saveMapRequest->map_file_name.data = mapName;
-    //        auto saveMapFuture = saveMapClient->async_send_request(saveMapRequest);
-    //        std::shared_ptr<norlab_icp_mapper_ros::srv::SaveMap::Request> request = std::make_shared<norlab_icp_mapper_ros::srv::SaveMap::Request>();
-    RCLCPP_INFO(this->get_logger(), "calling /save_map");
-    norlab_icp_mapper_ros::srv::SaveMap::Response response = rclcpp::call_service<norlab_icp_mapper_ros::srv::SaveMap>("/mapping/save_map", saveMapRequest);
-    RCLCPP_INFO(this->get_logger(), "/save_map done");
+    RCLCPP_INFO(this->get_logger(), "Saving LTR file %s", req->file_name.c_str());
 
-    std::rename(mapName.c_str(), req->file_name.data.c_str());
-    std::ofstream ltrFile(req->file_name.data, std::ios::app);
+    if (plannedTrajectory.poses.empty())
+    {
+        RCLCPP_WARN(this->get_logger(), "Cannot save empty trajectory.");
+        res->success = false;
+        return;
+    }
+
+    if (req->file_name.empty())
+    {
+        RCLCPP_WARN(this->get_logger(), "File name cannot be empty.");
+        res->success = false;
+        return;
+    }
+    else if (std::ifstream(req->file_name))
+    {
+        RCLCPP_WARN(this->get_logger(), "File already exists.");
+        res->success = false;
+        return;
+    }
+
+    res->success = saveLTR(req->file_name);
+
+    if (!res->success)
+    {
+        RCLCPP_ERROR(this->get_logger(), "Failed to save LTR file.");
+    }
+    else
+    {
+        RCLCPP_INFO(this->get_logger(), "LTR file succesfully saved");
+    }
+}
+
+bool WilnNode::saveLTR(std::string fileName)
+{
+    saveTempMap();
+
+    if (!std::ifstream(TEMP_MAP_FILE))  // Check that map was saved
+    {
+        RCLCPP_ERROR(this->get_logger(), "Failed to save map.");
+        return false;
+    }
+
+    std::rename(TEMP_MAP_FILE.c_str(), fileName.c_str());
+    std::ofstream ltrFile(fileName, std::ios::app);
 
     ltrFile << TRAJECTORY_DELIMITER << std::endl;
     ltrFile << "frame_id : " << plannedTrajectory.header.frame_id << std::endl;
@@ -360,103 +392,174 @@ void WilnNode::saveLTRServiceCallback(const std::shared_ptr<wiln::srv::SaveMapTr
     }
 
     ltrFile.close();
-    RCLCPP_INFO(this->get_logger(), "LTR file succesfully saved");
+    return true;
 }
 
 void WilnNode::loadLTRServiceCallback(const std::shared_ptr<wiln::srv::LoadMapTraj::Request> req, std::shared_ptr<wiln::srv::LoadMapTraj::Response> res)
 {
-	auto disableMappingRequest = std::make_shared<std_srvs::srv::Empty::Request>();
-	disableMappingClient->async_send_request(disableMappingRequest);
-	RCLCPP_INFO(this->get_logger(), "Disabled mapping before loading the LTR file");
-    loadLTR(req->file_name.data, false);
-    return;
+    RCLCPP_INFO(this->get_logger(), "Loading LTR file %s", req->file_name.c_str());
+
+    if (req->file_name.empty())
+    {
+        RCLCPP_WARN(this->get_logger(), "File name cannot be empty.");
+        res->success = false;
+        return;
+    }
+    else if (!std::ifstream(req->file_name))
+    {
+        RCLCPP_WARN(this->get_logger(), "File does not exist.");
+        res->success = false;
+        return;
+    }
+
+    disableMapping();
+    res->success = loadLTR(req->file_name, false);
+    
+    if (!res->success)
+    {
+        RCLCPP_ERROR(this->get_logger(), "Failed to load LTR file.");
+    }
+    else
+    {
+        RCLCPP_INFO(this->get_logger(), "LTR file succesfully loaded");
+    }
 }
 
 void WilnNode::loadLTRFromEndServiceCallback(const std::shared_ptr<wiln::srv::LoadMapTraj::Request> req, std::shared_ptr<wiln::srv::LoadMapTraj::Response> res)
 {
-	auto disableMappingRequest = std::make_shared<std_srvs::srv::Empty::Request>();
-	disableMappingClient->async_send_request(disableMappingRequest);
-	RCLCPP_INFO(this->get_logger(), "Disabled mapping before loading the LTR file");
-    loadLTR(req->file_name.data, true);
-    return;
+    RCLCPP_INFO(this->get_logger(), "Loading LTR file %s", req->file_name.c_str());
+
+    if (req->file_name.empty())
+    {
+        RCLCPP_WARN(this->get_logger(), "File name cannot be empty.");
+        res->success = false;
+        return;
+    }
+    else if (!std::ifstream(req->file_name))
+    {
+        RCLCPP_WARN(this->get_logger(), "File does not exist.");
+        res->success = false;
+        return;
+    }
+
+	disableMapping();
+    res->success = loadLTR(req->file_name, true);
+    
+    if (!res->success)
+    {
+        RCLCPP_ERROR(this->get_logger(), "Failed to load LTR file.");
+    }
+    else
+    {
+        RCLCPP_INFO(this->get_logger(), "LTR file succesfully loaded");
+    }
 }
 
-void WilnNode::loadLTR(std::string fileName, bool fromEnd)
+bool WilnNode::loadLTR(std::string fileName, bool fromEnd)
 {
-    using namespace std::chrono_literals;
-    plannedTrajectory.poses.clear();
-    std::ofstream mapFile("/tmp/map.vtk");
+    std::ofstream mapFile(TEMP_MAP_FILE);
     std::ifstream ltrFile(fileName);
     std::string line;
-    std::string pathFrameId;
-    bool parsingMap = true;
 
-    // Base pose
+    // Parse Map
+    while (std::getline(ltrFile, line) && line.find(TRAJECTORY_DELIMITER) == std::string::npos)
+    {
+        mapFile << line << std::endl;
+    }
+    mapFile.close();
+
+    // Parse Trajectory
+    std::getline(ltrFile, line);
+    std::string pathFrameId = line.substr(FRAME_ID_START_POSITION);
+
+    plannedTrajectory.poses.clear();
+    plannedTrajectory.header.frame_id = pathFrameId;
+    plannedTrajectory.header.stamp = this->now();
+
     geometry_msgs::msg::PoseStamped pose;
+    pose.header.frame_id = pathFrameId;
     pose.header.stamp = this->now();
 
     while (std::getline(ltrFile, line))
     {
-        if (parsingMap)
+        if (line.find("changing direction") != std::string::npos)
         {
-            if (line.find(TRAJECTORY_DELIMITER) != std::string::npos)
-            {
-                std::getline(ltrFile, line);
-                pathFrameId = line.substr(FRAME_ID_START_POSITION);
-                plannedTrajectory.header.frame_id = pathFrameId;
-                plannedTrajectory.header.stamp = this->now();
-                parsingMap = false;
-            }
-            else
-            {
-                mapFile << line << std::endl;
-            }
-        }
-        else
-        {
-            if (line.find("changing direction") != std::string::npos)
-            {
-                continue; // Ignore
-            } 
+            continue; // Ignore
+        } 
 
-            std::stringstream ss(line);
-            std::string token;
-            std::getline(ss, token, ',');
-            pose.pose.position.x = std::stod(token);
-            std::getline(ss, token, ',');
-            pose.pose.position.y = std::stod(token);
-            std::getline(ss, token, ',');
-            pose.pose.position.z = std::stod(token);
-            std::getline(ss, token, ',');
-            pose.pose.orientation.x = std::stod(token);
-            std::getline(ss, token, ',');
-            pose.pose.orientation.y = std::stod(token);
-            std::getline(ss, token, ',');
-            pose.pose.orientation.z = std::stod(token);
-            std::getline(ss, token);
-            pose.pose.orientation.w = std::stod(token);
-            pose.header.frame_id = pathFrameId;
-            plannedTrajectory.poses.push_back(pose);
+        std::stringstream ss(line);
+        std::string token;
+        std::vector<double> values;
+        while (std::getline(ss, token, ','))
+        {
+            values.push_back(std::stod(token));
         }
+        pose.pose.position.x = values[0];
+        pose.pose.position.y = values[1];
+        pose.pose.position.z = values[2];
+        pose.pose.orientation.x = values[3];
+        pose.pose.orientation.y = values[4];
+        pose.pose.orientation.z = values[5];
+        pose.pose.orientation.w = values[6];
+        plannedTrajectory.poses.push_back(pose);
     }
     ltrFile.close();
-    mapFile.close();
 
-    auto loadMapRequest = std::make_shared<norlab_icp_mapper_ros::srv::LoadMap::Request>();
-    loadMapRequest->map_file_name.data = "/tmp/map.vtk";
+    if (plannedTrajectory.poses.empty())
+    {
+        RCLCPP_WARN(this->get_logger(), "LTR file seems to contain no trajectory.");
+        return false;
+    }
 
-    int poseIndex = fromEnd ? 0 : plannedTrajectory.poses.size() - 1;
-    loadMapRequest->pose= plannedTrajectory.poses[poseIndex].pose;
-    loadMapClient->async_send_request(loadMapRequest);
+    if (fromEnd)
+    {
+        plannedTrajectory = reversePath(plannedTrajectory);
+    }
 
-    // auto loadMapFuture = loadMapClient->async_send_request(loadMapRequest);
-    RCLCPP_INFO(this->get_logger(), "calling /load_map");
-    norlab_icp_mapper_ros::srv::LoadMap::Response response = rclcpp::call_service<norlab_icp_mapper_ros::srv::LoadMap>("/mapping/load_map", loadMapRequest);
-    RCLCPP_INFO(this->get_logger(), "/load_map done");
-
-    std::remove("/tmp/map.vtk");
-
+    loadTempMap(plannedTrajectory.poses.front().pose);
+    std::remove(TEMP_MAP_FILE.c_str());
     publishPlannedTrajectory();
+    return true;
+}
+
+void WilnNode::enableMapping()
+{
+    auto enableMappingRequest = std::make_shared<std_srvs::srv::Empty::Request>();
+    auto future = enableMappingClient->async_send_request(enableMappingRequest);
+    auto response = future.wait_for(5s);
+
+    // TODO: implement feedback in mapper
+    // if (response->success)
+}
+
+void WilnNode::disableMapping()
+{
+    auto disableMappingRequest = std::make_shared<std_srvs::srv::Empty::Request>();
+	auto future = disableMappingClient->async_send_request(disableMappingRequest);
+    auto response = future.wait_for(5s);
+
+    // TODO: implement feedback in mapper
+}
+
+void WilnNode::saveTempMap()
+{
+    auto saveMapRequest = std::make_shared<norlab_icp_mapper_ros::srv::SaveMap::Request>();
+    saveMapRequest->map_file_name.data = TEMP_MAP_FILE;
+	auto future = saveMapClient->async_send_request(saveMapRequest);
+    auto response = future.wait_for(5s);
+
+    // TODO: implement feedback in mapper
+}
+
+void WilnNode::loadTempMap(geometry_msgs::msg::Pose pose)
+{
+    auto loadMapRequest = std::make_shared<norlab_icp_mapper_ros::srv::LoadMap::Request>();
+    loadMapRequest->map_file_name.data = TEMP_MAP_FILE;
+    loadMapRequest->pose = pose;
+    auto future = loadMapClient->async_send_request(loadMapRequest);
+    auto response = future.wait_for(5s);
+
+    // TODO: implement feedback in mapper
 }
 
 void WilnNode::publishPlannedTrajectory()
@@ -552,7 +655,8 @@ void WilnNode::playLoopServiceCallback(const std::shared_ptr<wiln::srv::PlayLoop
     {
         case State::IDLE:
         {
-            playLoop(req->nb_loops.data);
+            RCLCPP_WARN(this->get_logger(), "Playing loop %d times.", req->nb_loops);
+            playLoop(req->nb_loops);
             currentState = State::PLAYING;
             break;
         }
@@ -572,15 +676,16 @@ void WilnNode::playLoopServiceCallback(const std::shared_ptr<wiln::srv::PlayLoop
 void WilnNode::playLoop(int nbLoops)
 {
     robotPoseLock.lock();
-    nav_msgs::msg::Path loopTrajectory(plannedTrajectory);
+    nav_msgs::msg::Path loopTrajectory;
 
     // Remove overlapping poses
-    auto cleanTrajectory = removePathOverlap(loopTrajectory);
+    auto cleanTrajectory = removePathOverlap(plannedTrajectory);
+    RCLCPP_INFO(this->get_logger(), "Removed %ld overlapping points at the start.", plannedTrajectory.poses.size() - cleanTrajectory.poses.size());
 
     // Repeat trajectory X times
-    for (int i = 0; i < nbLoops - 1; ++i)
+    for (int i = 0; i < nbLoops; ++i)
     {
-        loopTrajectory.poses.insert(loopTrajectory.poses.end(), plannedTrajectory.poses.begin(), plannedTrajectory.poses.end());
+        loopTrajectory.poses.insert(loopTrajectory.poses.end(), cleanTrajectory.poses.begin(), cleanTrajectory.poses.end());
     }
 
     robotPoseLock.unlock();

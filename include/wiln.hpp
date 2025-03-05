@@ -68,6 +68,7 @@ private:
 
     const int FRAME_ID_START_POSITION = 11;
     const std::string TRAJECTORY_DELIMITER = "#############################";
+    const std::string TEMP_MAP_FILE = "/tmp/map.vtk";
     std::string odomTopic;
     float distanceBetweenWaypoints;
     float angleBetweenWaypoints;
@@ -92,9 +93,14 @@ private:
     void smoothTrajectoryServiceCallback(const std::shared_ptr<std_srvs::srv::Empty::Request> req, std::shared_ptr<std_srvs::srv::Empty::Response> res);
     void cancelTrajectoryServiceCallback(const std::shared_ptr<std_srvs::srv::Empty::Request> req, std::shared_ptr<std_srvs::srv::Empty::Response> res);
     void saveLTRServiceCallback(const std::shared_ptr<wiln::srv::SaveMapTraj::Request> req, std::shared_ptr<wiln::srv::SaveMapTraj::Response> res);
+    bool saveLTR(std::string fileName);
     void loadLTRServiceCallback(const std::shared_ptr<wiln::srv::LoadMapTraj::Request> req, std::shared_ptr<wiln::srv::LoadMapTraj::Response> res);
     void loadLTRFromEndServiceCallback(const std::shared_ptr<wiln::srv::LoadMapTraj::Request> req, std::shared_ptr<wiln::srv::LoadMapTraj::Response> res);
-    void loadLTR(std::string fileName, bool fromEnd);
+    bool loadLTR(std::string fileName, bool fromEnd);
+    void enableMapping();
+    void disableMapping();
+    void saveTempMap();
+    void loadTempMap(geometry_msgs::msg::Pose pose);
     void publishPlannedTrajectory();
     void publishRealTrajectory();
     void publishState();
