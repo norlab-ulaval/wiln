@@ -16,6 +16,8 @@ find_package(norlab_controllers_msgs REQUIRED)
 find_package(service_caller REQUIRED)
 find_package(tf2_geometry_msgs REQUIRED)
 
+include_directories(include)
+
 rosidl_generate_interfaces(${PROJECT_NAME}
     "srv/LoadMapTraj.srv"
     "srv/PlayLoop.srv"
@@ -23,7 +25,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
     DEPENDENCIES std_msgs std_srvs
 )
 
-add_executable(wiln_node src/wiln_node.cpp)
+add_executable(wiln_node src/wiln_node.cpp src/wiln.cpp)
 ament_target_dependencies(wiln_node
     rclcpp
     std_msgs
