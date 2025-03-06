@@ -14,7 +14,7 @@ def generate_launch_description():
         default_value='wiln'
     )
 
-    share_folder = get_package_share_directory('norlab_robot')
+    share_folder = get_package_share_directory('wiln')
     config_file = os.path.join(share_folder, "config", "_wiln.yaml")
 
     wiln_node = Node(
