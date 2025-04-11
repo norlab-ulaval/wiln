@@ -22,6 +22,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
     "srv/LoadMapTraj.srv"
     "srv/PlayLoop.srv"
     "srv/SaveMapTraj.srv"
+    "msg/State.msg"
     DEPENDENCIES std_msgs std_srvs
 )
 

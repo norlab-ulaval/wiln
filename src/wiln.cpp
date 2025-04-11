@@ -1,6 +1,7 @@
 #include <rclcpp/rclcpp.hpp>
 #include <fstream>
 #include <mutex>
+#include <std_msgs/msg/detail/string__struct.hpp>
 #include "wiln.hpp"
 #include "utils.hpp"
 
@@ -51,7 +52,7 @@ void WilnNode::initPublishers()
     publisher_qos.transient_local();
     plannedTrajectoryPublisher = this->create_publisher<nav_msgs::msg::Path>("planned_trajectory", publisher_qos);
     realTrajectoryPublisher = this->create_publisher<nav_msgs::msg::Path>("real_trajectory", publisher_qos);
-    statePublisher = this->create_publisher<std_msgs::msg::UInt8>("state", 1);
+    statePublisher = this->create_publisher<wiln::msg::State>("state", 1);
 
     publishPlannedTrajectory();
     publishRealTrajectory();
@@ -392,6 +393,7 @@ bool WilnNode::saveLTR(std::string fileName)
     }
 
     ltrFile.close();
+    this->ltrName = fileName;
     return true;
 }
 
@@ -519,6 +521,7 @@ bool WilnNode::loadLTR(std::string fileName, bool fromEnd)
     loadTempMap(plannedTrajectory.poses.front().pose);
     std::remove(TEMP_MAP_FILE.c_str());
     publishPlannedTrajectory();
+    this->ltrName = fileName;
     return true;
 }
 
@@ -574,8 +577,10 @@ void WilnNode::publishRealTrajectory()
 
 void WilnNode::publishState()
 {
-    std_msgs::msg::UInt8 stateMsg;
-    stateMsg.data = static_cast<uint8_t>(currentState);
+    wiln::msg::State stateMsg;
+    stateMsg.state.data = static_cast<uint8_t>(currentState);
+    stateMsg.ltr_name.data = this->ltrName;
+
     statePublisher->publish(stateMsg);
 }
 

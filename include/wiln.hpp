@@ -8,6 +8,7 @@
 #include <wiln/srv/save_map_traj.hpp>
 #include <wiln/srv/load_map_traj.hpp>
 #include <wiln/srv/play_loop.hpp>
+#include <wiln/msg/state.hpp>
 #include <norlab_icp_mapper_ros/srv/save_map.hpp>
 #include <norlab_icp_mapper_ros/srv/load_map.hpp>
 #include <service_caller/ServiceCaller.hpp>
@@ -42,7 +43,7 @@ private:
     rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odomSubscription;
     rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr plannedTrajectoryPublisher;
     rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr realTrajectoryPublisher;
-    rclcpp::Publisher<std_msgs::msg::UInt8>::SharedPtr statePublisher;
+    rclcpp::Publisher<wiln::msg::State>::SharedPtr statePublisher;
 
     rclcpp::Service<std_srvs::srv::Empty>::SharedPtr startRecordingService;
     rclcpp::Service<std_srvs::srv::Empty>::SharedPtr stopRecordingService;
@@ -69,6 +70,9 @@ private:
     const int FRAME_ID_START_POSITION = 11;
     const std::string TRAJECTORY_DELIMITER = "#############################";
     const std::string TEMP_MAP_FILE = "/tmp/map.vtk";
+
+    std::string ltrName; // Name of the LTR file being used for repeat
+
     std::string odomTopic;
     float distanceBetweenWaypoints;
     float angleBetweenWaypoints;
