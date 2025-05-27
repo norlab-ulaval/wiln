@@ -10,7 +10,6 @@
 #include <wiln/srv/play_loop.hpp>
 #include <norlab_icp_mapper_ros/srv/save_map.hpp>
 #include <norlab_icp_mapper_ros/srv/load_map.hpp>
-#include <service_caller/ServiceCaller.hpp>
 
 #include <geometry_msgs/msg/twist.hpp>
 #include <nav_msgs/msg/odometry.hpp>
