@@ -70,6 +70,7 @@ private:
     const std::string TRAJECTORY_DELIMITER = "#############################";
     const std::string TEMP_MAP_FILE = "/tmp/map.vtk";
     std::string odomTopic;
+    std::string followPathTopic;
     float distanceBetweenWaypoints;
     float angleBetweenWaypoints;
     float trajectorySpeed;

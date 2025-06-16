@@ -23,6 +23,7 @@ void WilnNode::initParameters()
     this->declare_parameter("angle_between_waypoints", 0.1);
     this->declare_parameter("trajectory_speed", 1.5);
     this->declare_parameter("smoothing_window_size", 9);
+    this->declare_parameter("follow_path_topic", "/follow_path");
     updateParameters();
 }
 
@@ -33,6 +34,7 @@ void WilnNode::updateParameters()
     this->get_parameter("angle_between_waypoints", angleBetweenWaypoints);
     this->get_parameter("trajectory_speed", trajectorySpeed);
     this->get_parameter("smoothing_window_size", smoothingWindowSize);
+    this->get_parameter("follow_path_topic", followPathTopic);
 }
 
 void WilnNode::initSubscribers()
@@ -103,7 +105,7 @@ void WilnNode::initClients()
     disableMappingClient = this->create_client<std_srvs::srv::Empty>("/mapping/disable_mapping");
     saveMapClient = this->create_client<norlab_icp_mapper_ros::srv::SaveMap>("/mapping/save_map");
     loadMapClient = this->create_client<norlab_icp_mapper_ros::srv::LoadMap>("/mapping/load_map");
-    followPathClient = rclcpp_action::create_client<norlab_controllers_msgs::action::FollowPath>(this, "/follow_path");
+    followPathClient = rclcpp_action::create_client<norlab_controllers_msgs::action::FollowPath>(this, followPathTopic);
 }
 
 void WilnNode::initTimers()
@@ -638,7 +640,7 @@ void WilnNode::playLine()
     robotPoseLock.unlock();
     realTrajectory.poses.clear();
 
-    plannedTrajectory = lineTrajectory;
+    // plannedTrajectory = lineTrajectory;
     publishPlannedTrajectory();
     sendFollowPathAction(lineTrajectory);
 }
