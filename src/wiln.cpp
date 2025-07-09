@@ -470,6 +470,11 @@ bool WilnNode::loadLTR(std::string fileName, bool fromEnd)
     }
     mapFile.close();
 
+    if (!std::getline(ltrFile, line)) {
+        RCLCPP_WARN(this->get_logger(), "LTR file seems to contain no trajectory.");
+        return false;
+    }
+
     // Parse Trajectory
     std::getline(ltrFile, line);
     std::string pathFrameId = line.substr(FRAME_ID_START_POSITION);
