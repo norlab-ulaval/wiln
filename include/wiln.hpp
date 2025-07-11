@@ -98,10 +98,10 @@ private:
     void loadLTRServiceCallback(const std::shared_ptr<wiln::srv::LoadMapTraj::Request> req, std::shared_ptr<wiln::srv::LoadMapTraj::Response> res);
     void loadLTRFromEndServiceCallback(const std::shared_ptr<wiln::srv::LoadMapTraj::Request> req, std::shared_ptr<wiln::srv::LoadMapTraj::Response> res);
     bool loadLTR(std::string fileName, bool fromEnd);
-    void enableMapping();
-    void disableMapping();
-    void saveTempMap();
-    void loadTempMap(geometry_msgs::msg::Pose pose);
+    bool enableMapping();
+    bool disableMapping();
+    bool saveTempMap();
+    bool loadTempMap(geometry_msgs::msg::Pose pose);
     void publishPlannedTrajectory();
     void publishRealTrajectory();
     void publishState();
@@ -113,6 +113,9 @@ private:
     void goalResponseCallback(const rclcpp_action::ClientGoalHandle<norlab_controllers_msgs::action::FollowPath>::SharedPtr &trajectoryGoalHandle);
     void trajectoryFeedbackCallback(rclcpp_action::ClientGoalHandle<norlab_controllers_msgs::action::FollowPath>::SharedPtr, const std::shared_ptr<const norlab_controllers_msgs::action::FollowPath::Feedback> feedback);
     void trajectoryResultCallback(const rclcpp_action::ClientGoalHandle<norlab_controllers_msgs::action::FollowPath>::WrappedResult &trajectory_result);
+    bool checkFutureStatus(std::future_status status, std::string service_name);
+
+
 };
 
 #endif // WILN_NODE_HPP

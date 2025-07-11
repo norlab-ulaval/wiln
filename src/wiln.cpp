@@ -1,6 +1,7 @@
 #include <rclcpp/rclcpp.hpp>
 #include <fstream>
 #include <mutex>
+#include <sys/stat.h>
 #include "wiln.hpp"
 #include "utils.hpp"
 
@@ -230,7 +231,7 @@ void WilnNode::stopRecordingServiceCallback(const std::shared_ptr<std_srvs::srv:
 void WilnNode::clearTrajectoryServiceCallback(const std::shared_ptr<std_srvs::srv::Empty::Request> req, std::shared_ptr<std_srvs::srv::Empty::Response> res)
 {
     switch (currentState)
-    {   
+    {
         case State::IDLE:
         {
             RCLCPP_INFO(this->get_logger(), "Clearing trajectory.");
@@ -254,7 +255,7 @@ void WilnNode::clearTrajectoryServiceCallback(const std::shared_ptr<std_srvs::sr
 void WilnNode::reverseTrajectoryServiceCallback(const std::shared_ptr<std_srvs::srv::Empty::Request> req, std::shared_ptr<std_srvs::srv::Empty::Response> res)
 {
     switch (currentState)
-    {   
+    {
         case State::IDLE:
         {
             RCLCPP_INFO(this->get_logger(), "Reversing trajectory.");
@@ -278,7 +279,7 @@ void WilnNode::reverseTrajectoryServiceCallback(const std::shared_ptr<std_srvs::
 void WilnNode::flipTrajectoryServiceCallback(const std::shared_ptr<std_srvs::srv::Empty::Request> req, std::shared_ptr<std_srvs::srv::Empty::Response> res)
 {
     switch (currentState)
-    {   
+    {
         case State::IDLE:
         {
             RCLCPP_INFO(this->get_logger(), "Flipping trajectory.");
@@ -309,7 +310,7 @@ void WilnNode::smoothTrajectoryServiceCallback(const std::shared_ptr<std_srvs::s
 void WilnNode::cancelTrajectoryServiceCallback(const std::shared_ptr<std_srvs::srv::Empty::Request> req, std::shared_ptr<std_srvs::srv::Empty::Response> res)
 {
     switch (currentState)
-    {   
+    {
         case State::IDLE:
         {
             RCLCPP_WARN(this->get_logger(), "Cannot cancel trajectory, no trajectory is being played.");
@@ -416,7 +417,7 @@ void WilnNode::loadLTRServiceCallback(const std::shared_ptr<wiln::srv::LoadMapTr
 
     disableMapping();
     res->success = loadLTR(req->file_name, false);
-    
+
     if (!res->success)
     {
         RCLCPP_ERROR(this->get_logger(), "Failed to load LTR file.");
@@ -446,7 +447,7 @@ void WilnNode::loadLTRFromEndServiceCallback(const std::shared_ptr<wiln::srv::Lo
 
 	disableMapping();
     res->success = loadLTR(req->file_name, true);
-    
+
     if (!res->success)
     {
         RCLCPP_ERROR(this->get_logger(), "Failed to load LTR file.");
@@ -492,7 +493,7 @@ bool WilnNode::loadLTR(std::string fileName, bool fromEnd)
         if (line.find("changing direction") != std::string::npos)
         {
             continue; // Ignore
-        } 
+        }
 
         std::stringstream ss(line);
         std::string token;
@@ -523,48 +524,75 @@ bool WilnNode::loadLTR(std::string fileName, bool fromEnd)
         plannedTrajectory = reversePath(plannedTrajectory);
     }
 
-    loadTempMap(plannedTrajectory.poses.front().pose);
+    if (!loadTempMap(plannedTrajectory.poses.front().pose))
+    {
+        RCLCPP_ERROR(this->get_logger(), "Failed to load temporary map.");
+        return false;
+    }
+
     std::remove(TEMP_MAP_FILE.c_str());
     publishPlannedTrajectory();
     return true;
 }
 
-void WilnNode::enableMapping()
+bool WilnNode::checkFutureStatus(std::future_status status, std::string service_name)
+{
+    if (status == std::future_status::ready) {
+        // auto response = future.get();
+        // TODO Use response
+        return true;
+    } else if (status == std::future_status::timeout) {
+        RCLCPP_WARN(this->get_logger(), "Service call %s timed out.", service_name.c_str());
+    } else if (status == std::future_status::deferred) {
+        RCLCPP_ERROR(this->get_logger(), "Future for service call %s is deferred.", service_name.c_str());
+    }
+    return false;
+}
+
+bool WilnNode::enableMapping()
 {
     auto enableMappingRequest = std::make_shared<std_srvs::srv::Empty::Request>();
     auto future = enableMappingClient->async_send_request(enableMappingRequest);
     auto response = future.wait_for(5s);
 
+    return checkFutureStatus(response, enableMappingClient->get_service_name());
+
     // TODO: implement feedback in mapper
     // if (response->success)
 }
 
-void WilnNode::disableMapping()
+bool WilnNode::disableMapping()
 {
     auto disableMappingRequest = std::make_shared<std_srvs::srv::Empty::Request>();
 	auto future = disableMappingClient->async_send_request(disableMappingRequest);
     auto response = future.wait_for(5s);
 
+    return checkFutureStatus(response, disableMappingClient->get_service_name());
+
     // TODO: implement feedback in mapper
 }
 
-void WilnNode::saveTempMap()
+bool WilnNode::saveTempMap()
 {
     auto saveMapRequest = std::make_shared<norlab_icp_mapper_ros::srv::SaveMap::Request>();
     saveMapRequest->map_file_name.data = TEMP_MAP_FILE;
 	auto future = saveMapClient->async_send_request(saveMapRequest);
-    auto response = future.wait_for(5s);
+    auto response = future.wait_for(10s);
+
+    return checkFutureStatus(response, saveMapClient->get_service_name());
 
     // TODO: implement feedback in mapper
 }
 
-void WilnNode::loadTempMap(geometry_msgs::msg::Pose pose)
+bool WilnNode::loadTempMap(geometry_msgs::msg::Pose pose)
 {
     auto loadMapRequest = std::make_shared<norlab_icp_mapper_ros::srv::LoadMap::Request>();
     loadMapRequest->map_file_name.data = TEMP_MAP_FILE;
     loadMapRequest->pose = pose;
     auto future = loadMapClient->async_send_request(loadMapRequest);
-    auto response = future.wait_for(5s);
+    auto response = future.wait_for(10s);
+
+    return checkFutureStatus(response, loadMapClient->get_service_name());
 
     // TODO: implement feedback in mapper
 }
