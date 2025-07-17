@@ -626,7 +626,7 @@ void WilnNode::playLine()
     RCLCPP_INFO(this->get_logger(), " -> Distance from end: %f", lin_dist_end);
 
     // Reverse trajectory if robot is closer to end
-    if (lin_dist_end < lin_dist_start + 2.0)
+    if (lin_dist_start > lin_dist_end + 2.0)
     {
         RCLCPP_INFO(this->get_logger(), "Reversing trajectory.");
         lineTrajectory = reversePath(lineTrajectory);
