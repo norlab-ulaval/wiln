@@ -476,7 +476,6 @@ bool WilnNode::loadLTR(std::string fileName, bool fromEnd)
     }
 
     // Parse Trajectory
-    std::getline(ltrFile, line);
     std::string pathFrameId = line.substr(FRAME_ID_START_POSITION);
 
     plannedTrajectory.poses.clear();
