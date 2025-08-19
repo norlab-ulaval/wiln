@@ -683,6 +683,7 @@ void WilnNode::playLoop(int nbLoops)
 {
     robotPoseLock.lock();
     nav_msgs::msg::Path loopTrajectory;
+    loopTrajectory.header = plannedTrajectory.header;
 
     // Remove overlapping poses
     auto cleanTrajectory = removePathOverlap(plannedTrajectory);
