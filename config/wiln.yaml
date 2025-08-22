@@ -2,7 +2,11 @@
   wiln_node:
     ros__parameters:
       odom_topic: "/mapping/icp_odom"
+      follow_path_topic: "/follow_path"
       distance_between_waypoints: 0.1
       angle_between_waypoints: 0.1
       trajectory_speed: 1.5
       smoothing_window_size: 9
+      loop_closure_linear_tolerance: 5.0
+      loop_closure_angular_tolerance: 1.58
+

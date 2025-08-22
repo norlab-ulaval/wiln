@@ -24,6 +24,8 @@ void WilnNode::initParameters()
     this->declare_parameter("trajectory_speed", 1.5);
     this->declare_parameter("smoothing_window_size", 9);
     this->declare_parameter("follow_path_topic", "/follow_path");
+    this->declare_parameter("loop_closure_linear_tolerance", 5.0);
+    this->declare_parameter("loop_closure_angular_tolerance", M_PI / 4);
     updateParameters();
 }
 
@@ -35,6 +37,8 @@ void WilnNode::updateParameters()
     this->get_parameter("trajectory_speed", trajectorySpeed);
     this->get_parameter("smoothing_window_size", smoothingWindowSize);
     this->get_parameter("follow_path_topic", followPathTopic);
+    this->get_parameter("loop_closure_linear_tolerance", loopClosureLinearTolerance);
+    this->get_parameter("loop_closure_angular_tolerance", loopClosureAngularTolerance);
 }
 
 void WilnNode::initSubscribers()
@@ -684,6 +688,19 @@ void WilnNode::playLoopServiceCallback(const std::shared_ptr<wiln::srv::PlayLoop
     {
         case State::IDLE:
         {
+            // Check if loop closure is within tolerances
+            auto [lin_dist, ang_dist] = diffBetweenPoses(plannedTrajectory.poses.front().pose, plannedTrajectory.poses.back().pose);
+            if (lin_dist > loopClosureLinearTolerance)
+            {
+                RCLCPP_WARN(this->get_logger(), "Trajectory is not a loop, linear distance (%f) exceeds tolerance (%f).", lin_dist, loopClosureLinearTolerance);
+                break;
+            }
+            if (std::fabs(ang_dist) > loopClosureAngularTolerance)
+            {
+                RCLCPP_WARN(this->get_logger(), "Trajectory is not a loop, angular distance (%f) exceeds tolerance (%f).", std::fabs(ang_dist), loopClosureAngularTolerance);
+                break;
+            }
+
             RCLCPP_WARN(this->get_logger(), "Playing loop %d times.", req->nb_loops);
             playLoop(req->nb_loops);
             currentState = State::PLAYING;
@@ -722,6 +739,7 @@ void WilnNode::playLoop(int nbLoops)
     realTrajectory.poses.clear();
 
     sendFollowPathAction(loopTrajectory);
+    // TODO: Check that a controller responded 
 }
 
 void WilnNode::sendFollowPathAction(nav_msgs::msg::Path &path)
