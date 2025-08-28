@@ -24,6 +24,8 @@ void WilnNode::initParameters()
     this->declare_parameter("trajectory_speed", 1.5);
     this->declare_parameter("smoothing_window_size", 9);
     this->declare_parameter("follow_path_topic", "/follow_path");
+    this->declare_parameter("loop_closure_linear_tolerance", 5.0);
+    this->declare_parameter("loop_closure_angular_tolerance", M_PI / 4);
     updateParameters();
 }
 
@@ -35,6 +37,8 @@ void WilnNode::updateParameters()
     this->get_parameter("trajectory_speed", trajectorySpeed);
     this->get_parameter("smoothing_window_size", smoothingWindowSize);
     this->get_parameter("follow_path_topic", followPathTopic);
+    this->get_parameter("loop_closure_linear_tolerance", loopClosureLinearTolerance);
+    this->get_parameter("loop_closure_angular_tolerance", loopClosureAngularTolerance);
 }
 
 void WilnNode::initSubscribers()
@@ -233,9 +237,10 @@ void WilnNode::clearTrajectoryServiceCallback(const std::shared_ptr<std_srvs::sr
     {   
         case State::IDLE:
         {
-            RCLCPP_INFO(this->get_logger(), "Clearing trajectory.");
+            RCLCPP_INFO(this->get_logger(), "Clearing trajectory...");
             plannedTrajectory.poses.clear();
             publishPlannedTrajectory();
+            RCLCPP_INFO(this->get_logger(), "Done.");
             break;
         }
         case State::RECORDING:
@@ -257,9 +262,10 @@ void WilnNode::reverseTrajectoryServiceCallback(const std::shared_ptr<std_srvs::
     {   
         case State::IDLE:
         {
-            RCLCPP_INFO(this->get_logger(), "Reversing trajectory.");
+            RCLCPP_INFO(this->get_logger(), "Reversing trajectory...");
             plannedTrajectory = reversePath(plannedTrajectory);
             publishPlannedTrajectory();
+            RCLCPP_INFO(this->get_logger(), "Done.");
             break;
         }
         case State::RECORDING:
@@ -281,9 +287,10 @@ void WilnNode::flipTrajectoryServiceCallback(const std::shared_ptr<std_srvs::srv
     {   
         case State::IDLE:
         {
-            RCLCPP_INFO(this->get_logger(), "Flipping trajectory.");
+            RCLCPP_INFO(this->get_logger(), "Flipping trajectory...");
             plannedTrajectory = flipPath(plannedTrajectory);
             publishPlannedTrajectory();
+            RCLCPP_INFO(this->get_logger(), "Done.");
             break;
         }
         case State::RECORDING:
@@ -301,9 +308,28 @@ void WilnNode::flipTrajectoryServiceCallback(const std::shared_ptr<std_srvs::srv
 
 void WilnNode::smoothTrajectoryServiceCallback(const std::shared_ptr<std_srvs::srv::Empty::Request> req, std::shared_ptr<std_srvs::srv::Empty::Response> res)
 {
-    RCLCPP_INFO(this->get_logger(), "Smoothing trajectory.");
-    plannedTrajectory = smoothPathLowPass(plannedTrajectory, smoothingWindowSize);
-    publishPlannedTrajectory();
+    switch (currentState)
+    {   
+        case State::IDLE:
+        {
+            RCLCPP_INFO(this->get_logger(), "Smoothing trajectory...");
+            plannedTrajectory = smoothPathLowPass(plannedTrajectory, smoothingWindowSize);
+            publishPlannedTrajectory();
+            RCLCPP_INFO(this->get_logger(), "Done.");
+            break;
+        }
+        case State::RECORDING:
+        {
+            RCLCPP_WARN(this->get_logger(), "Cannot smooth trajectory while recording.");
+            break;
+        }
+        case State::PLAYING:
+        {
+            RCLCPP_WARN(this->get_logger(), "Cannot smooth trajectory while playing.");
+            break;
+        }
+    }
+    
 }
 
 void WilnNode::cancelTrajectoryServiceCallback(const std::shared_ptr<std_srvs::srv::Empty::Request> req, std::shared_ptr<std_srvs::srv::Empty::Response> res)
@@ -322,9 +348,10 @@ void WilnNode::cancelTrajectoryServiceCallback(const std::shared_ptr<std_srvs::s
         }
         case State::PLAYING:
         {
+            RCLCPP_INFO(this->get_logger(), "Cancelling trajectory...");
             currentState = State::IDLE;
             followPathClient->async_cancel_all_goals();
-            RCLCPP_INFO(this->get_logger(), "Cancelled trajectory.");
+            RCLCPP_INFO(this->get_logger(), "Done.");
             break;
         }
     }
@@ -661,6 +688,19 @@ void WilnNode::playLoopServiceCallback(const std::shared_ptr<wiln::srv::PlayLoop
     {
         case State::IDLE:
         {
+            // Check if loop closure is within tolerances
+            auto [lin_dist, ang_dist] = diffBetweenPoses(plannedTrajectory.poses.front().pose, plannedTrajectory.poses.back().pose);
+            if (lin_dist > loopClosureLinearTolerance)
+            {
+                RCLCPP_WARN(this->get_logger(), "Trajectory is not a loop, linear distance (%f) exceeds tolerance (%f).", lin_dist, loopClosureLinearTolerance);
+                break;
+            }
+            if (std::fabs(ang_dist) > loopClosureAngularTolerance)
+            {
+                RCLCPP_WARN(this->get_logger(), "Trajectory is not a loop, angular distance (%f) exceeds tolerance (%f).", std::fabs(ang_dist), loopClosureAngularTolerance);
+                break;
+            }
+
             RCLCPP_WARN(this->get_logger(), "Playing loop %d times.", req->nb_loops);
             playLoop(req->nb_loops);
             currentState = State::PLAYING;
@@ -699,6 +739,7 @@ void WilnNode::playLoop(int nbLoops)
     realTrajectory.poses.clear();
 
     sendFollowPathAction(loopTrajectory);
+    // TODO: Check that a controller responded 
 }
 
 void WilnNode::sendFollowPathAction(nav_msgs::msg::Path &path)

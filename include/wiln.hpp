@@ -75,6 +75,8 @@ private:
     float angleBetweenWaypoints;
     float trajectorySpeed;
     int smoothingWindowSize;
+    float loopClosureLinearTolerance;
+    float loopClosureAngularTolerance;
 
     void initParameters();
     void updateParameters();
