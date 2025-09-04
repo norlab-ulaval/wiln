@@ -3,6 +3,7 @@
 #include <mutex>
 #include "wiln.hpp"
 #include "utils.hpp"
+#include <sys/stat.h>
 
 using namespace std::chrono_literals;
 
@@ -393,34 +394,41 @@ void WilnNode::saveLTRServiceCallback(const std::shared_ptr<wiln::srv::SaveMapTr
     }
 }
 
-bool WilnNode::saveLTR(std::string fileName)
-{
-    saveTempMap();
+bool WilnNode::saveLTR(std::string folderName)
 
-    if (!std::ifstream(TEMP_MAP_FILE))  // Check that map was saved
+{
+    // Create the folder if it doesn't exist
+    if (system(("mkdir -p " + folderName).c_str()) != 0)
+    {
+        RCLCPP_ERROR(this->get_logger(), "Failed to create folder: %s", folderName.c_str());
+        return false;
+    }
+    
+    saveMap(folderName);
+
+    if (!std::ifstream(folderName + "/map.vtk"))  // Check that map was saved
     {
         RCLCPP_ERROR(this->get_logger(), "Failed to save map.");
         return false;
     }
 
-    std::rename(TEMP_MAP_FILE.c_str(), fileName.c_str());
-    std::ofstream ltrFile(fileName, std::ios::app);
+    std::ofstream trajectoryFile(folderName + "/trajectory.txt", std::ios::app);
 
-    ltrFile << TRAJECTORY_DELIMITER << std::endl;
-    ltrFile << "frame_id : " << plannedTrajectory.header.frame_id << std::endl;
+    // trajectoryFile << TRAJECTORY_DELIMITER << std::endl;
+    trajectoryFile << "# frame_id : " << plannedTrajectory.header.frame_id << std::endl;
 
     for (auto pose : plannedTrajectory.poses)
     {
-        ltrFile << pose.pose.position.x << ","
-                << pose.pose.position.y << ","
-                << pose.pose.position.z << ","
-                << pose.pose.orientation.x << ","
-                << pose.pose.orientation.y << ","
-                << pose.pose.orientation.z << ","
-                << pose.pose.orientation.w << std::endl;
+        trajectoryFile << pose.pose.position.x << ","
+                       << pose.pose.position.y << ","
+                       << pose.pose.position.z << ","
+                       << pose.pose.orientation.x << ","
+                       << pose.pose.orientation.y << ","
+                       << pose.pose.orientation.z << ","
+                       << pose.pose.orientation.w << std::endl;
     }
 
-    ltrFile.close();
+    trajectoryFile.close();
     return true;
 }
 
@@ -486,73 +494,153 @@ void WilnNode::loadLTRFromEndServiceCallback(const std::shared_ptr<wiln::srv::Lo
 
 bool WilnNode::loadLTR(std::string fileName, bool fromEnd)
 {
-    std::ofstream mapFile(TEMP_MAP_FILE);
-    std::ifstream ltrFile(fileName);
-    std::string line;
+    struct stat statbuf;
+    if (stat(fileName.c_str(), &statbuf) == 0 && S_ISDIR(statbuf.st_mode)) {
+        std::string fileNameMap = fileName + "/map.vtk";
+        std::string fileNameTraj = fileName + "/trajectory.txt";
 
-    // Parse Map
-    while (std::getline(ltrFile, line) && line.find(TRAJECTORY_DELIMITER) == std::string::npos)
-    {
-        mapFile << line << std::endl;
-    }
-    mapFile.close();
-
-    if (!std::getline(ltrFile, line)) {
-        RCLCPP_WARN(this->get_logger(), "LTR file seems to contain no trajectory.");
-        return false;
-    }
-
-    // Parse Trajectory
-    std::string pathFrameId = line.substr(FRAME_ID_START_POSITION);
-
-    plannedTrajectory.poses.clear();
-    plannedTrajectory.header.frame_id = pathFrameId;
-    plannedTrajectory.header.stamp = this->now();
-
-    geometry_msgs::msg::PoseStamped pose;
-    pose.header.frame_id = pathFrameId;
-    pose.header.stamp = this->now();
-
-    while (std::getline(ltrFile, line))
-    {
-        if (line.find("changing direction") != std::string::npos)
-        {
-            continue; // Ignore
-        } 
-
-        std::stringstream ss(line);
-        std::string token;
-        std::vector<double> values;
-        while (std::getline(ss, token, ','))
-        {
-            values.push_back(std::stod(token));
+        std::ifstream mapFileVerification(fileNameMap);
+        if (!mapFileVerification.is_open()) {
+            RCLCPP_WARN(this->get_logger(), "LTR directory does not contain map.vtk. Skipping map loading and continuing with trajectory.");
         }
-        pose.pose.position.x = values[0];
-        pose.pose.position.y = values[1];
-        pose.pose.position.z = values[2];
-        pose.pose.orientation.x = values[3];
-        pose.pose.orientation.y = values[4];
-        pose.pose.orientation.z = values[5];
-        pose.pose.orientation.w = values[6];
-        plannedTrajectory.poses.push_back(pose);
-    }
-    ltrFile.close();
+        
+        std::string line;
+        std::ofstream mapFile(fileNameMap);
+        while (std::getline(mapFileVerification, line))
+        {
+            mapFile << line << std::endl;
+        }
+        mapFile.close();
 
-    if (plannedTrajectory.poses.empty())
-    {
-        RCLCPP_WARN(this->get_logger(), "LTR file seems to contain no trajectory.");
-        return false;
-    }
 
-    if (fromEnd)
-    {
-        plannedTrajectory = reversePath(plannedTrajectory);
-    }
+        // Read trajectory
+        std::ifstream trajFile(fileNameTraj);
+        if (!trajFile.is_open()) {
+            RCLCPP_WARN(this->get_logger(), "LTR directory does not contain trajectory.txt.");
+            return false;
+        }
+        plannedTrajectory.poses.clear();
+        plannedTrajectory.header.stamp = this->now();
+        std::string pathFrameId;
 
-    loadTempMap(plannedTrajectory.poses.front().pose);
-    std::remove(TEMP_MAP_FILE.c_str());
-    publishPlannedTrajectory();
-    return true;
+        while (std::getline(trajFile, line)) {
+            if (line.empty() || line[0] == '#') {
+                // Parse frame_id from comment line
+                auto pos = line.find("frame_id : ");
+                if (pos != std::string::npos) {
+                    pathFrameId = line.substr(pos + 11);
+                    plannedTrajectory.header.frame_id = pathFrameId;
+                }
+                continue;
+            }
+            std::stringstream ss(line);
+            std::string token;
+            std::vector<double> values;
+            geometry_msgs::msg::PoseStamped pose;
+            pose.header.frame_id = pathFrameId;
+            pose.header.stamp = this->now();
+            while (std::getline(ss, token, ',')) {
+                values.push_back(std::stod(token));
+            }
+            if (values.size() == 7) {
+                pose.header.stamp = this->now();
+                pose.pose.position.x = values[0];
+                pose.pose.position.y = values[1];
+                pose.pose.position.z = values[2];
+                pose.pose.orientation.x = values[3];
+                pose.pose.orientation.y = values[4];
+                pose.pose.orientation.z = values[5];
+                pose.pose.orientation.w = values[6];
+                plannedTrajectory.poses.push_back(pose);
+            }
+        }
+        trajFile.close();
+
+        if (plannedTrajectory.poses.empty()) {
+            RCLCPP_WARN(this->get_logger(), "Trajectory file seems to contain no trajectory.");
+            return false;
+        }
+
+        if (fromEnd) {
+            plannedTrajectory = reversePath(plannedTrajectory);
+        }
+
+        loadMap(plannedTrajectory.poses.front().pose, fileNameMap);
+        // std::remove(TEMP_MAP_FILE.c_str());
+        publishPlannedTrajectory();
+        return true;
+
+    }
+    else {
+        // Old method
+        std::ofstream mapFile("tmp/map.vtk");
+        std::ifstream ltrFile(fileName);
+        std::string line;
+
+        // Parse Map
+        while (std::getline(ltrFile, line) && line.find(TRAJECTORY_DELIMITER) == std::string::npos)
+        {
+            mapFile << line << std::endl;
+        }
+        mapFile.close();
+
+        if (!std::getline(ltrFile, line)) {
+            RCLCPP_WARN(this->get_logger(), "LTR file seems to contain no trajectory.");
+            return false;
+        }
+
+        // Parse Trajectory
+        std::string pathFrameId = line.substr(FRAME_ID_START_POSITION);
+
+        plannedTrajectory.poses.clear();
+        plannedTrajectory.header.frame_id = pathFrameId;
+        plannedTrajectory.header.stamp = this->now();
+
+        geometry_msgs::msg::PoseStamped pose;
+        pose.header.frame_id = pathFrameId;
+        pose.header.stamp = this->now();
+
+        while (std::getline(ltrFile, line))
+        {
+            if (line.find("changing direction") != std::string::npos)
+            {
+                continue; // Ignore
+            } 
+
+            std::stringstream ss(line);
+            std::string token;
+            std::vector<double> values;
+            while (std::getline(ss, token, ','))
+            {
+                values.push_back(std::stod(token));
+            }
+            pose.pose.position.x = values[0];
+            pose.pose.position.y = values[1];
+            pose.pose.position.z = values[2];
+            pose.pose.orientation.x = values[3];
+            pose.pose.orientation.y = values[4];
+            pose.pose.orientation.z = values[5];
+            pose.pose.orientation.w = values[6];
+            plannedTrajectory.poses.push_back(pose);
+        }
+        ltrFile.close();
+
+        if (plannedTrajectory.poses.empty())
+        {
+            RCLCPP_WARN(this->get_logger(), "LTR file seems to contain no trajectory.");
+            return false;
+        }
+
+        if (fromEnd)
+        {
+            plannedTrajectory = reversePath(plannedTrajectory);
+        }
+
+        loadMap(plannedTrajectory.poses.front().pose, "/tmp/map.vtk");
+        std::remove("/tmp/map.vtk");
+        publishPlannedTrajectory();
+        return true;
+    }
 }
 
 void WilnNode::enableMapping()
@@ -574,20 +662,20 @@ void WilnNode::disableMapping()
     // TODO: implement feedback in mapper
 }
 
-void WilnNode::saveTempMap()
+void WilnNode::saveMap(std::string folderName)
 {
     auto saveMapRequest = std::make_shared<norlab_icp_mapper_ros::srv::SaveMap::Request>();
-    saveMapRequest->map_file_name.data = TEMP_MAP_FILE;
+    saveMapRequest->map_file_name.data = folderName + "/map.vtk";
 	auto future = saveMapClient->async_send_request(saveMapRequest);
     auto response = future.wait_for(5s);
 
     // TODO: implement feedback in mapper
 }
 
-void WilnNode::loadTempMap(geometry_msgs::msg::Pose pose)
+void WilnNode::loadMap(geometry_msgs::msg::Pose pose, std::string fileNameMap)
 {
     auto loadMapRequest = std::make_shared<norlab_icp_mapper_ros::srv::LoadMap::Request>();
-    loadMapRequest->map_file_name.data = TEMP_MAP_FILE;
+    loadMapRequest->map_file_name.data = fileNameMap;
     loadMapRequest->pose = pose;
     auto future = loadMapClient->async_send_request(loadMapRequest);
     auto response = future.wait_for(5s);

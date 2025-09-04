@@ -68,7 +68,6 @@ private:
 
     const int FRAME_ID_START_POSITION = 11;
     const std::string TRAJECTORY_DELIMITER = "#############################";
-    const std::string TEMP_MAP_FILE = "/tmp/map.vtk";
     std::string odomTopic;
     std::string followPathTopic;
     float distanceBetweenWaypoints;
@@ -102,8 +101,8 @@ private:
     bool loadLTR(std::string fileName, bool fromEnd);
     void enableMapping();
     void disableMapping();
-    void saveTempMap();
-    void loadTempMap(geometry_msgs::msg::Pose pose);
+    void saveMap(std::string folderName);
+    void loadMap(geometry_msgs::msg::Pose pose, std::string fileNameMap);
     void publishPlannedTrajectory();
     void publishRealTrajectory();
     void publishState();
