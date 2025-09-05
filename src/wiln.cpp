@@ -408,8 +408,8 @@ bool WilnNode::saveLTR(std::string folderName)
 
     if (!std::ifstream(folderName + "/map.vtk"))  // Check that map was saved
     {
-        RCLCPP_ERROR(this->get_logger(), "Failed to save map.");
-        return false;
+        RCLCPP_WARN(this->get_logger(), "Failed to save map or it is not yet done to be saved by the mapper.");
+        // return false;
     }
 
     std::ofstream trajectoryFile(folderName + "/trajectory.txt", std::ios::app);
@@ -667,7 +667,7 @@ void WilnNode::saveMap(std::string folderName)
     auto saveMapRequest = std::make_shared<norlab_icp_mapper_ros::srv::SaveMap::Request>();
     saveMapRequest->map_file_name.data = folderName + "/map.vtk";
 	auto future = saveMapClient->async_send_request(saveMapRequest);
-    auto response = future.wait_for(5s);
+    auto response = future.wait_for(1s);
 
     // TODO: implement feedback in mapper
 }
