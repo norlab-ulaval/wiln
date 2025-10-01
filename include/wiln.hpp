@@ -5,9 +5,9 @@
 #include <tf2/LinearMath/Quaternion.h>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 
-#include <wiln/srv/save_map_traj.hpp>
-#include <wiln/srv/load_map_traj.hpp>
-#include <wiln/srv/play_loop.hpp>
+#include <norlab_custom_interfaces/srv/save_map_traj.hpp>
+#include <norlab_custom_interfaces/srv/load_map_traj.hpp>
+#include <norlab_custom_interfaces/srv/play_loop.hpp>
 #include <norlab_icp_mapper_ros/srv/save_map.hpp>
 #include <norlab_icp_mapper_ros/srv/load_map.hpp>
 
