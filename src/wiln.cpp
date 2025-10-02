@@ -72,16 +72,16 @@ void WilnNode::initServices()
     stopRecordingService = this->create_service<std_srvs::srv::Empty>(
         "stop_recording", std::bind(&WilnNode::stopRecordingServiceCallback, this, std::placeholders::_1, std::placeholders::_2)
     );
-    saveMapTrajService = this->create_service<wiln::srv::SaveMapTraj>(
+    saveMapTrajService = this->create_service<norlab_custom_interfaces::srv::SaveMapTraj>(
         "save_map_traj", std::bind(&WilnNode::saveLTRServiceCallback, this, std::placeholders::_1, std::placeholders::_2)
     );
-    loadMapTrajService = this->create_service<wiln::srv::LoadMapTraj>(
+    loadMapTrajService = this->create_service<norlab_custom_interfaces::srv::LoadMapTraj>(
         "load_map_traj", std::bind(&WilnNode::loadLTRServiceCallback, this, std::placeholders::_1, std::placeholders::_2)
     );
-    loadMapTrajFromEndService = this->create_service<wiln::srv::LoadMapTraj>(
+    loadMapTrajFromEndService = this->create_service<norlab_custom_interfaces::srv::LoadMapTraj>(
         "load_map_traj_from_end", std::bind(&WilnNode::loadLTRFromEndServiceCallback, this, std::placeholders::_1, std::placeholders::_2)
     );
-    playLoopService = this->create_service<wiln::srv::PlayLoop>(
+    playLoopService = this->create_service<norlab_custom_interfaces::srv::PlayLoop>(
         "play_loop", std::bind(&WilnNode::playLoopServiceCallback, this, std::placeholders::_1, std::placeholders::_2)
     );
     playLineService = this->create_service<std_srvs::srv::Empty>(
@@ -358,7 +358,7 @@ void WilnNode::cancelTrajectoryServiceCallback(const std::shared_ptr<std_srvs::s
     }
 }
 
-void WilnNode::saveLTRServiceCallback(const std::shared_ptr<wiln::srv::SaveMapTraj::Request> req, std::shared_ptr<wiln::srv::SaveMapTraj::Response> res)
+void WilnNode::saveLTRServiceCallback(const std::shared_ptr<norlab_custom_interfaces::srv::SaveMapTraj::Request> req, std::shared_ptr<norlab_custom_interfaces::srv::SaveMapTraj::Response> res)
 {
     RCLCPP_INFO(this->get_logger(), "Saving LTR file %s", req->file_name.c_str());
 
@@ -432,7 +432,7 @@ bool WilnNode::saveLTR(std::string folderName)
     return true;
 }
 
-void WilnNode::loadLTRServiceCallback(const std::shared_ptr<wiln::srv::LoadMapTraj::Request> req, std::shared_ptr<wiln::srv::LoadMapTraj::Response> res)
+void WilnNode::loadLTRServiceCallback(const std::shared_ptr<norlab_custom_interfaces::srv::LoadMapTraj::Request> req, std::shared_ptr<norlab_custom_interfaces::srv::LoadMapTraj::Response> res)
 {
     RCLCPP_INFO(this->get_logger(), "Loading LTR file %s", req->file_name.c_str());
 
@@ -462,7 +462,7 @@ void WilnNode::loadLTRServiceCallback(const std::shared_ptr<wiln::srv::LoadMapTr
     }
 }
 
-void WilnNode::loadLTRFromEndServiceCallback(const std::shared_ptr<wiln::srv::LoadMapTraj::Request> req, std::shared_ptr<wiln::srv::LoadMapTraj::Response> res)
+void WilnNode::loadLTRFromEndServiceCallback(const std::shared_ptr<norlab_custom_interfaces::srv::LoadMapTraj::Request> req, std::shared_ptr<norlab_custom_interfaces::srv::LoadMapTraj::Response> res)
 {
     RCLCPP_INFO(this->get_logger(), "Loading LTR file %s", req->file_name.c_str());
 
@@ -764,7 +764,7 @@ void WilnNode::playLine()
     sendFollowPathAction(lineTrajectory);
 }
 
-void WilnNode::playLoopServiceCallback(const std::shared_ptr<wiln::srv::PlayLoop::Request> req, std::shared_ptr<wiln::srv::PlayLoop::Response> res)
+void WilnNode::playLoopServiceCallback(const std::shared_ptr<norlab_custom_interfaces::srv::PlayLoop::Request> req, std::shared_ptr<norlab_custom_interfaces::srv::PlayLoop::Response> res)
 {
     if (plannedTrajectory.poses.empty())
     {

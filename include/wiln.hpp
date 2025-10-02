@@ -45,10 +45,10 @@ private:
 
     rclcpp::Service<std_srvs::srv::Empty>::SharedPtr startRecordingService;
     rclcpp::Service<std_srvs::srv::Empty>::SharedPtr stopRecordingService;
-    rclcpp::Service<wiln::srv::SaveMapTraj>::SharedPtr saveMapTrajService;
-    rclcpp::Service<wiln::srv::LoadMapTraj>::SharedPtr loadMapTrajService;
-    rclcpp::Service<wiln::srv::LoadMapTraj>::SharedPtr loadMapTrajFromEndService;
-    rclcpp::Service<wiln::srv::PlayLoop>::SharedPtr playLoopService;
+    rclcpp::Service<norlab_custom_interfaces::srv::SaveMapTraj>::SharedPtr saveMapTrajService;
+    rclcpp::Service<norlab_custom_interfaces::srv::LoadMapTraj>::SharedPtr loadMapTrajService;
+    rclcpp::Service<norlab_custom_interfaces::srv::LoadMapTraj>::SharedPtr loadMapTrajFromEndService;
+    rclcpp::Service<norlab_custom_interfaces::srv::PlayLoop>::SharedPtr playLoopService;
     rclcpp::Service<std_srvs::srv::Empty>::SharedPtr playLineService;
     rclcpp::Service<std_srvs::srv::Empty>::SharedPtr cancelTrajectoryService;
     rclcpp::Service<std_srvs::srv::Empty>::SharedPtr smoothTrajectoryService;
@@ -93,10 +93,10 @@ private:
     void flipTrajectoryServiceCallback(const std::shared_ptr<std_srvs::srv::Empty::Request> req, std::shared_ptr<std_srvs::srv::Empty::Response> res);
     void smoothTrajectoryServiceCallback(const std::shared_ptr<std_srvs::srv::Empty::Request> req, std::shared_ptr<std_srvs::srv::Empty::Response> res);
     void cancelTrajectoryServiceCallback(const std::shared_ptr<std_srvs::srv::Empty::Request> req, std::shared_ptr<std_srvs::srv::Empty::Response> res);
-    void saveLTRServiceCallback(const std::shared_ptr<wiln::srv::SaveMapTraj::Request> req, std::shared_ptr<wiln::srv::SaveMapTraj::Response> res);
+    void saveLTRServiceCallback(const std::shared_ptr<norlab_custom_interfaces::srv::SaveMapTraj::Request> req, std::shared_ptr<norlab_custom_interfaces::srv::SaveMapTraj::Response> res);
     bool saveLTR(std::string fileName);
-    void loadLTRServiceCallback(const std::shared_ptr<wiln::srv::LoadMapTraj::Request> req, std::shared_ptr<wiln::srv::LoadMapTraj::Response> res);
-    void loadLTRFromEndServiceCallback(const std::shared_ptr<wiln::srv::LoadMapTraj::Request> req, std::shared_ptr<wiln::srv::LoadMapTraj::Response> res);
+    void loadLTRServiceCallback(const std::shared_ptr<norlab_custom_interfaces::srv::LoadMapTraj::Request> req, std::shared_ptr<norlab_custom_interfaces::srv::LoadMapTraj::Response> res);
+    void loadLTRFromEndServiceCallback(const std::shared_ptr<norlab_custom_interfaces::srv::LoadMapTraj::Request> req, std::shared_ptr<norlab_custom_interfaces::srv::LoadMapTraj::Response> res);
     bool loadLTR(std::string fileName, bool fromEnd);
     void enableMapping();
     void disableMapping();
@@ -107,7 +107,7 @@ private:
     void publishState();
     void playLineServiceCallback(const std::shared_ptr<std_srvs::srv::Empty::Request> req, std::shared_ptr<std_srvs::srv::Empty::Response> res);
     void playLine();
-    void playLoopServiceCallback(const std::shared_ptr<wiln::srv::PlayLoop::Request> req, std::shared_ptr<wiln::srv::PlayLoop::Response> res);
+    void playLoopServiceCallback(const std::shared_ptr<norlab_custom_interfaces::srv::PlayLoop::Request> req, std::shared_ptr<norlab_custom_interfaces::srv::PlayLoop::Response> res);
     void playLoop(int nbLoops);
     void sendFollowPathAction(nav_msgs::msg::Path &path);
     void goalResponseCallback(const rclcpp_action::ClientGoalHandle<norlab_controllers_msgs::action::FollowPath>::SharedPtr &trajectoryGoalHandle);
