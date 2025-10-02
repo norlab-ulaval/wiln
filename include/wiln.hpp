@@ -17,7 +17,7 @@
 #include <std_msgs/msg/u_int8.hpp>
 
 #include <rclcpp_action/rclcpp_action.hpp>
-#include <norlab_controllers_msgs/action/follow_path.hpp>
+#include <norlab_custom_interfaces/action/follow_path.hpp>
 
 enum State
 {
@@ -60,7 +60,7 @@ private:
     rclcpp::Client<std_srvs::srv::Empty>::SharedPtr disableMappingClient;
     rclcpp::Client<norlab_icp_mapper_ros::srv::SaveMap>::SharedPtr saveMapClient;
     rclcpp::Client<norlab_icp_mapper_ros::srv::LoadMap>::SharedPtr loadMapClient;
-    rclcpp_action::Client<norlab_controllers_msgs::action::FollowPath>::SharedPtr followPathClient;
+    rclcpp_action::Client<norlab_custom_interfaces::action::FollowPath>::SharedPtr followPathClient;
 
     rclcpp::TimerBase::SharedPtr stateTimer;
     rclcpp::TimerBase::SharedPtr updateTimer;
@@ -110,9 +110,9 @@ private:
     void playLoopServiceCallback(const std::shared_ptr<norlab_custom_interfaces::srv::PlayLoop::Request> req, std::shared_ptr<norlab_custom_interfaces::srv::PlayLoop::Response> res);
     void playLoop(int nbLoops);
     void sendFollowPathAction(nav_msgs::msg::Path &path);
-    void goalResponseCallback(const rclcpp_action::ClientGoalHandle<norlab_controllers_msgs::action::FollowPath>::SharedPtr &trajectoryGoalHandle);
-    void trajectoryFeedbackCallback(rclcpp_action::ClientGoalHandle<norlab_controllers_msgs::action::FollowPath>::SharedPtr, const std::shared_ptr<const norlab_controllers_msgs::action::FollowPath::Feedback> feedback);
-    void trajectoryResultCallback(const rclcpp_action::ClientGoalHandle<norlab_controllers_msgs::action::FollowPath>::WrappedResult &trajectory_result);
+    void goalResponseCallback(const rclcpp_action::ClientGoalHandle<norlab_custom_interfaces::action::FollowPath>::SharedPtr &trajectoryGoalHandle);
+    void trajectoryFeedbackCallback(rclcpp_action::ClientGoalHandle<norlab_custom_interfaces::action::FollowPath>::SharedPtr, const std::shared_ptr<const norlab_custom_interfaces::action::FollowPath::Feedback> feedback);
+    void trajectoryResultCallback(const rclcpp_action::ClientGoalHandle<norlab_custom_interfaces::action::FollowPath>::WrappedResult &trajectory_result);
 };
 
 #endif // WILN_NODE_HPP
