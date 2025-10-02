@@ -504,16 +504,8 @@ bool WilnNode::loadLTR(std::string fileName, bool fromEnd)
             RCLCPP_WARN(this->get_logger(), "LTR directory does not contain map.vtk. Skipping map loading and continuing with trajectory.");
         }
         
-        std::string line;
-        std::ofstream mapFile(fileNameMap);
-        while (std::getline(mapFileVerification, line))
-        {
-            mapFile << line << std::endl;
-        }
-        mapFile.close();
-
-
         // Read trajectory
+        std::string line;
         std::ifstream trajFile(fileNameTraj);
         if (!trajFile.is_open()) {
             RCLCPP_WARN(this->get_logger(), "LTR directory does not contain trajectory.txt.");
