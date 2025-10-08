@@ -47,7 +47,7 @@ void WilnNode::initSubscribers()
     odomSubscription = this->create_subscription<nav_msgs::msg::Odometry>(
         odomTopic, 10, std::bind(&WilnNode::odomCallback, this, std::placeholders::_1)
     );
-    // trajectoryResultSubscription = this->create_subscription<norlab_custom_interfaces::action::FollowPath::Result>(
+    // trajectoryResultSubscription = this->create_subscription<controller_msgs::action::FollowPath::Result>(
     //         "follow_path/result", 1000, std::bind(&WilnNode::trajectoryResultCallback, this, std::placeholders::_1)
     // );
 }
@@ -72,16 +72,16 @@ void WilnNode::initServices()
     stopRecordingService = this->create_service<std_srvs::srv::Empty>(
         "stop_recording", std::bind(&WilnNode::stopRecordingServiceCallback, this, std::placeholders::_1, std::placeholders::_2)
     );
-    saveMapTrajService = this->create_service<norlab_custom_interfaces::srv::SaveMapTraj>(
+    saveMapTrajService = this->create_service<wiln_msgs::srv::SaveMapTraj>(
         "save_map_traj", std::bind(&WilnNode::saveLTRServiceCallback, this, std::placeholders::_1, std::placeholders::_2)
     );
-    loadMapTrajService = this->create_service<norlab_custom_interfaces::srv::LoadMapTraj>(
+    loadMapTrajService = this->create_service<wiln_msgs::srv::LoadMapTraj>(
         "load_map_traj", std::bind(&WilnNode::loadLTRServiceCallback, this, std::placeholders::_1, std::placeholders::_2)
     );
-    loadMapTrajFromEndService = this->create_service<norlab_custom_interfaces::srv::LoadMapTraj>(
+    loadMapTrajFromEndService = this->create_service<wiln_msgs::srv::LoadMapTraj>(
         "load_map_traj_from_end", std::bind(&WilnNode::loadLTRFromEndServiceCallback, this, std::placeholders::_1, std::placeholders::_2)
     );
-    playLoopService = this->create_service<norlab_custom_interfaces::srv::PlayLoop>(
+    playLoopService = this->create_service<wiln_msgs::srv::PlayLoop>(
         "play_loop", std::bind(&WilnNode::playLoopServiceCallback, this, std::placeholders::_1, std::placeholders::_2)
     );
     playLineService = this->create_service<std_srvs::srv::Empty>(
@@ -110,7 +110,7 @@ void WilnNode::initClients()
     disableMappingClient = this->create_client<std_srvs::srv::Empty>("/mapping/disable_mapping");
     saveMapClient = this->create_client<norlab_icp_mapper_ros::srv::SaveMap>("/mapping/save_map");
     loadMapClient = this->create_client<norlab_icp_mapper_ros::srv::LoadMap>("/mapping/load_map");
-    followPathClient = rclcpp_action::create_client<norlab_custom_interfaces::action::FollowPath>(this, followPathTopic);
+    followPathClient = rclcpp_action::create_client<controller_msgs::action::FollowPath>(this, followPathTopic);
 }
 
 void WilnNode::initTimers()
@@ -360,7 +360,7 @@ void WilnNode::cancelTrajectoryServiceCallback(const std::shared_ptr<std_srvs::s
     }
 }
 
-void WilnNode::saveLTRServiceCallback(const std::shared_ptr<norlab_custom_interfaces::srv::SaveMapTraj::Request> req, std::shared_ptr<norlab_custom_interfaces::srv::SaveMapTraj::Response> res)
+void WilnNode::saveLTRServiceCallback(const std::shared_ptr<wiln_msgs::srv::SaveMapTraj::Request> req, std::shared_ptr<wiln_msgs::srv::SaveMapTraj::Response> res)
 {
     RCLCPP_INFO(this->get_logger(), "Saving LTR file %s", req->file_name.c_str());
 
@@ -434,7 +434,7 @@ bool WilnNode::saveLTR(std::string folderName)
     return true;
 }
 
-void WilnNode::loadLTRServiceCallback(const std::shared_ptr<norlab_custom_interfaces::srv::LoadMapTraj::Request> req, std::shared_ptr<norlab_custom_interfaces::srv::LoadMapTraj::Response> res)
+void WilnNode::loadLTRServiceCallback(const std::shared_ptr<wiln_msgs::srv::LoadMapTraj::Request> req, std::shared_ptr<wiln_msgs::srv::LoadMapTraj::Response> res)
 {
     RCLCPP_INFO(this->get_logger(), "Loading LTR file %s", req->file_name.c_str());
 
@@ -464,7 +464,7 @@ void WilnNode::loadLTRServiceCallback(const std::shared_ptr<norlab_custom_interf
     }
 }
 
-void WilnNode::loadLTRFromEndServiceCallback(const std::shared_ptr<norlab_custom_interfaces::srv::LoadMapTraj::Request> req, std::shared_ptr<norlab_custom_interfaces::srv::LoadMapTraj::Response> res)
+void WilnNode::loadLTRFromEndServiceCallback(const std::shared_ptr<wiln_msgs::srv::LoadMapTraj::Request> req, std::shared_ptr<wiln_msgs::srv::LoadMapTraj::Response> res)
 {
     RCLCPP_INFO(this->get_logger(), "Loading LTR file %s", req->file_name.c_str());
 
@@ -758,7 +758,7 @@ void WilnNode::playLine()
     sendFollowPathAction(lineTrajectory);
 }
 
-void WilnNode::playLoopServiceCallback(const std::shared_ptr<norlab_custom_interfaces::srv::PlayLoop::Request> req, std::shared_ptr<norlab_custom_interfaces::srv::PlayLoop::Response> res)
+void WilnNode::playLoopServiceCallback(const std::shared_ptr<wiln_msgs::srv::PlayLoop::Request> req, std::shared_ptr<wiln_msgs::srv::PlayLoop::Response> res)
 {
     if (plannedTrajectory.poses.empty())
     {
@@ -830,19 +830,19 @@ void WilnNode::sendFollowPathAction(nav_msgs::msg::Path &path)
     disableMappingClient->async_send_request(disableMappingRequest);
 
     // TODO: validate action call
-    auto goal_msg = norlab_custom_interfaces::action::FollowPath::Goal();
+    auto goal_msg = controller_msgs::action::FollowPath::Goal();
     goal_msg.follower_options.init_mode.data = 1; // init_mode = 1 : continue
     goal_msg.follower_options.velocity.data = trajectorySpeed;
     goal_msg.path = path;
 
-    auto send_goal_options = rclcpp_action::Client<norlab_custom_interfaces::action::FollowPath>::SendGoalOptions();
+    auto send_goal_options = rclcpp_action::Client<controller_msgs::action::FollowPath>::SendGoalOptions();
     send_goal_options.goal_response_callback = std::bind(&WilnNode::goalResponseCallback, this, std::placeholders::_1);
     send_goal_options.feedback_callback = std::bind(&WilnNode::trajectoryFeedbackCallback, this, std::placeholders::_1, std::placeholders::_2);
     send_goal_options.result_callback = std::bind(&WilnNode::trajectoryResultCallback, this, std::placeholders::_1);
     followPathClient->async_send_goal(goal_msg, send_goal_options);
 }
 
-void WilnNode::goalResponseCallback(const rclcpp_action::ClientGoalHandle<norlab_custom_interfaces::action::FollowPath>::SharedPtr &trajectoryGoalHandle)
+void WilnNode::goalResponseCallback(const rclcpp_action::ClientGoalHandle<controller_msgs::action::FollowPath>::SharedPtr &trajectoryGoalHandle)
 {
     if (!trajectoryGoalHandle)
     {
@@ -854,14 +854,14 @@ void WilnNode::goalResponseCallback(const rclcpp_action::ClientGoalHandle<norlab
     }
 }
 
-void WilnNode::trajectoryFeedbackCallback(rclcpp_action::ClientGoalHandle<norlab_custom_interfaces::action::FollowPath>::SharedPtr,
-                                const std::shared_ptr<const norlab_custom_interfaces::action::FollowPath::Feedback> feedback)
+void WilnNode::trajectoryFeedbackCallback(rclcpp_action::ClientGoalHandle<controller_msgs::action::FollowPath>::SharedPtr,
+                                const std::shared_ptr<const controller_msgs::action::FollowPath::Feedback> feedback)
 {
     // TODO: program feedback callback
     return;
 }
 
-void WilnNode::trajectoryResultCallback(const rclcpp_action::ClientGoalHandle<norlab_custom_interfaces::action::FollowPath>::WrappedResult &trajectory_result)
+void WilnNode::trajectoryResultCallback(const rclcpp_action::ClientGoalHandle<controller_msgs::action::FollowPath>::WrappedResult &trajectory_result)
 {
     if (trajectory_result.code == rclcpp_action::ResultCode::SUCCEEDED)
     {

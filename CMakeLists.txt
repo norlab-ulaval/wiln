@@ -11,7 +11,8 @@ find_package(tf2 REQUIRED)
 find_package(rclcpp_action REQUIRED)
 find_package(nav_msgs REQUIRED)
 find_package(norlab_icp_mapper_ros REQUIRED)
-find_package(norlab_custom_interfaces REQUIRED)
+find_package(wiln_msgs REQUIRED)
+find_package(controller_msgs REQUIRED)
 find_package(tf2_geometry_msgs REQUIRED)
 
 include_directories(include)
@@ -27,7 +28,8 @@ ament_target_dependencies(wiln_node
     tf2
     rclcpp_action
     norlab_icp_mapper_ros
-    norlab_custom_interfaces
+    wiln_msgs
+    controller_msgs
     tf2_geometry_msgs
 )
 
