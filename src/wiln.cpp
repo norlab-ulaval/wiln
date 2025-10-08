@@ -240,7 +240,9 @@ void WilnNode::clearTrajectoryServiceCallback(const std::shared_ptr<std_srvs::sr
         {
             RCLCPP_INFO(this->get_logger(), "Clearing trajectory...");
             plannedTrajectory.poses.clear();
+            realTrajectory.poses.clear();
             publishPlannedTrajectory();
+            publishRealTrajectory();
             RCLCPP_INFO(this->get_logger(), "Done.");
             break;
         }
