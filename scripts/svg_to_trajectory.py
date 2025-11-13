@@ -58,8 +58,10 @@ def compute_orientations(points, threshold=1e-6):
 def visualize_path(xy_yaw_path, target_width, title="SVG Path Visualization"):
     
     plt.figure(figsize=(10, 10)) # Make plot a bit larger
-    plt.plot([p[0] for p in xy_yaw_path], [p[1] for p in xy_yaw_path],
-                marker='.', markersize=2, linestyle='-', color='blue', label='Generated Path')
+    plasma_cmap = plt.get_cmap('plasma')
+    colors = plasma_cmap(np.linspace(0,1,len(xy_yaw_path)))
+    plt.scatter([p[0] for p in xy_yaw_path], [p[1] for p in xy_yaw_path], 
+                c=colors, label='Generated Path')
     plt.gca().set_aspect('equal', adjustable='box')
     plt.title(title)
     plt.xlabel("X (meters)")
@@ -74,7 +76,7 @@ def visualize_path(xy_yaw_path, target_width, title="SVG Path Visualization"):
         x, y, angle = xy_yaw_path[i]
         plt.arrow(x, y,
                     arrow_length * np.cos(angle), arrow_length * np.sin(angle),
-                    head_width=head_width, head_length=head_length, fc='red', ec='red', alpha=0.7)
+                    head_width=head_width, head_length=head_length, fc=colors[i], ec=colors[i], alpha=0.7)
     plt.legend()
     plt.show()
 
