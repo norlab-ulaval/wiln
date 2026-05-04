@@ -74,6 +74,26 @@ The second ones define the registration parameters and filters for the SLAM algo
 
 General launch files will launch the various nodes required for navigation. They will also import the aforementioned parameters. A [launch file example](https://github.com/norlab-ulaval/WILN/blob/master/launch/warthog.launch) is given.
 
+### MTT integration in this workspace
+
+In this workspace, WILN is not launched directly with `ros2 launch wiln` for the MTT robot. The MTT integration adds:
+- odom-to-pose conversion
+- the MTT path follower
+- the repeat supervisor
+- the WILN node itself
+
+Use one of these entry points instead:
+
+```bash
+ros2 launch norlab_robot teach_repeat.launch.py
+```
+
+or, from `demos/data_collection`:
+
+```bash
+docker compose --profile wiln up wiln
+```
+
 ## General operation and services
 
 The framework is divided into two phases: teach and repeat. During the teach phase, an operator drives the robot along a desired route. The robot simultaneously localizes and builds a map of the environment. All robot poses are logged and represent the reference trajectory.
@@ -87,11 +107,25 @@ The following table lists the various ROS services that enable the teach-and-rep
 | /start_recording | Starts recording poses to build the reference map (cannot be called if another trajectory is already loaded). | None |
 | /stop_recording | Stops the trajectory recording (cannot be called is the recording was not started). | None                 |
 | /clear_trajectory | Clears the current trajectory from active memory. | None                 |
-| /play_trajectory | Starts the repeat phase. The robot will repeat the trajectory backwards if it is located at it's end and the system supports both forwards or reverse motion. | None |
-| /play_loop_trajectory | Starts the repeat phase for a loop trajectory. | nbLoops (uint32)     |
+| /play_line | Starts the repeat phase for the current route. The robot may reverse the route internally if it is closer to the end than to the start. | None |
+| /play_loop | Starts the repeat phase for a loop trajectory. | `nb_loops`           |
 | /cancel_trajectory | Cancels the current repeat phase in the event of system failure. | None  |
-| /save_ltr | Saves the current map and trajectory in a `.ltr` file. If no directory is specified, the file will be saved in the `home/<user>/.ros` directory. | `file_name` (string) |
-| /load_ltr | loads a specicied `.ltr` file (cannot be executed if a map/trajectory is already loaded). If not directory is specified, will load from the `home/<user>/.ros` directory. | `file_name` (string) |
+| /save_map_traj | Saves the current map and trajectory in a `.ltr` file. | `file_name` (string) |
+| /load_map_traj | Loads a specified `.ltr` file from its beginning. | `file_name` (string) |
+| /load_map_traj_from_end | Loads a specified `.ltr` file from its end. | `file_name` (string) |
+| /clear_trajectory | Clears the current trajectory from active memory. | None |
+
+In the MTT demo stack, the operator-facing services are wrapped by the repeat supervisor:
+
+| Service name | Description |
+| :----------- | :---------- |
+| /mtt_repeat/teach_start | Start a new teach phase |
+| /mtt_repeat/teach_stop | Stop teach and arm the route in memory |
+| /mtt_repeat/play_line | Start replay if safety, ICP odom, and action server are ready |
+| /mtt_repeat/play_loop | Start loop replay |
+| /mtt_repeat/cancel | Cancel replay |
+| /mtt_repeat/mark_ready | Mark a loaded route ready for replay |
+| /mtt_repeat/mark_idle | Clear the armed/ready state |
 
 ## Citing
 
