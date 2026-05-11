@@ -66,10 +66,26 @@ bool TrajectoryManager::loadLTR(const std::string& filename,
             continue;
         }
 
-        // Parse CSV pose (simplified)
-        geometry_msgs::msg::PoseStamped pose;
-        // ... (Parsing logic here)
-        trajectory.paths.back().poses.push_back(pose);
+        // Parse CSV pose: x,y,z,qx,qy,qz,qw
+        std::stringstream ss(line);
+        std::string token;
+        std::vector<double> vals;
+        while (std::getline(ss, token, ',')) {
+            try { vals.push_back(std::stod(token)); }
+            catch (...) { break; }
+        }
+        if (vals.size() == 7) {
+            geometry_msgs::msg::PoseStamped pose;
+            pose.header.frame_id = trajectory.header.frame_id;
+            pose.pose.position.x = vals[0];
+            pose.pose.position.y = vals[1];
+            pose.pose.position.z = vals[2];
+            pose.pose.orientation.x = vals[3];
+            pose.pose.orientation.y = vals[4];
+            pose.pose.orientation.z = vals[5];
+            pose.pose.orientation.w = vals[6];
+            trajectory.paths.back().poses.push_back(pose);
+        }
     }
     return true;
 }

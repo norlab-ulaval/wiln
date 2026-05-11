@@ -17,6 +17,7 @@ find_package(norlab_icp_mapper_ros REQUIRED)
 find_package(norlab_controllers_msgs REQUIRED)
 find_package(service_caller REQUIRED)
 
+find_package(visualization_msgs REQUIRED)
 find_package(Eigen3 REQUIRED)
 
 rosidl_generate_interfaces(${PROJECT_NAME}
@@ -26,12 +27,13 @@ rosidl_generate_interfaces(${PROJECT_NAME}
     DEPENDENCIES std_msgs std_srvs
 )
 
-add_executable(wiln_node 
+add_executable(wiln_node
     src/WilnNode.cpp
     src/TeachRecorder.cpp
     src/TrajectoryStreamer.cpp
     src/PathDeformer.cpp
     src/TrajectoryManager.cpp
+    src/ObstacleManager.cpp
 )
 
 target_include_directories(wiln_node PUBLIC
@@ -54,6 +56,7 @@ ament_target_dependencies(wiln_node
     service_caller
     tf2_geometry_msgs
     sensor_msgs
+    visualization_msgs
 )
 
 rosidl_get_typesupport_target(cpp_typesupport_target ${PROJECT_NAME} "rosidl_typesupport_cpp")

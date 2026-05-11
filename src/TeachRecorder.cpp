@@ -1,4 +1,5 @@
 #include "wiln/TeachRecorder.hpp"
+#include "wiln/SE3Utils.hpp"
 #include <cmath>
 #include <tf2/utils.h>
 
@@ -74,22 +75,52 @@ norlab_controllers_msgs::msg::PathSequence TeachRecorder::getTrajectory() const 
     return trajectory_;
 }
 
+void TeachRecorder::setTrajectory(const norlab_controllers_msgs::msg::PathSequence& traj) {
+    std::lock_guard<std::mutex> lock(data_mutex_);
+    trajectory_ = traj;
+    if (!traj.paths.empty()) {
+        last_forward_direction_ = traj.paths.back().forward;
+    }
+}
+
 void TeachRecorder::smooth() {
     std::lock_guard<std::mutex> lock(data_mutex_);
+    const int W = params_.smoothing_window;
+
     for (auto& path : trajectory_.paths) {
-        if (path.poses.size() < 2 * params_.smoothing_window + 1) continue;
+        if (static_cast<int>(path.poses.size()) < 2 * W + 1) continue;
 
         std::vector<geometry_msgs::msg::PoseStamped> smoothed_poses = path.poses;
-        for (size_t i = params_.smoothing_window; i < path.poses.size() - params_.smoothing_window; ++i) {
-            double sum_x = 0, sum_y = 0, sum_z = 0;
-            for (int k = -params_.smoothing_window; k <= params_.smoothing_window; ++k) {
-                sum_x += path.poses[i + k].pose.position.x;
-                sum_y += path.poses[i + k].pose.position.y;
-                sum_z += path.poses[i + k].pose.position.z;
+        const double inv_window = 1.0 / static_cast<double>(2 * W + 1);
+
+        for (size_t i = static_cast<size_t>(W);
+             i < path.poses.size() - static_cast<size_t>(W); ++i) {
+
+            // Fréchet mean on SE(3): iterative left-perturbation averaging.
+            // 1. Initialise T_mean at the central pose.
+            Eigen::Matrix4d T_mean = se3::fromPose(path.poses[i].pose);
+
+            // 2. Iterate until convergence (3 iterations is sufficient for a
+            //    local window of Gaussian-distributed poses).
+            for (int iter = 0; iter < 3; ++iter) {
+                Eigen::Matrix4d T_mean_inv = se3::InvSE3(T_mean);
+
+                // Accumulate sum of Log(T_mean⁻¹ · T_j) in se(3)
+                Eigen::Vector<double,6> xi_sum = Eigen::Vector<double,6>::Zero();
+                for (int k = -W; k <= W; ++k) {
+                    Eigen::Matrix4d T_j = se3::fromPose(path.poses[i + k].pose);
+                    xi_sum += se3::LogSE3(T_mean_inv * T_j);
+                }
+                Eigen::Vector<double,6> xi_mean = xi_sum * inv_window;
+
+                // Update T_mean = T_mean · Exp(xi_mean)
+                T_mean = T_mean * se3::ExpSE3(xi_mean);
+
+                // Early exit if correction is negligible
+                if (xi_mean.norm() < 1e-8) break;
             }
-            smoothed_poses[i].pose.position.x = sum_x / (2 * params_.smoothing_window + 1);
-            smoothed_poses[i].pose.position.y = sum_y / (2 * params_.smoothing_window + 1);
-            smoothed_poses[i].pose.position.z = sum_z / (2 * params_.smoothing_window + 1);
+
+            smoothed_poses[i].pose = se3::toPose<geometry_msgs::msg::Pose>(T_mean);
         }
         path.poses = smoothed_poses;
     }

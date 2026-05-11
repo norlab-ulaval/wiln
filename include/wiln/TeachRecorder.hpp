@@ -35,7 +35,12 @@ public:
     void addPose(const geometry_msgs::msg::PoseStamped& pose, bool forward);
 
     norlab_controllers_msgs::msg::PathSequence getTrajectory() const;
-    
+
+    /**
+     * @brief Load an externally-parsed trajectory (e.g. from LTR file).
+     */
+    void setTrajectory(const norlab_controllers_msgs::msg::PathSequence& traj);
+
     /**
      * @brief Apply a B-Spline or advanced smoothing to the current trajectory.
      */
