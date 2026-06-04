@@ -5,6 +5,18 @@
 
 namespace wiln {
 
+namespace {
+bool isInsideBox(const ObstacleParams::SelfFilterBox& box,
+                 double x,
+                 double y,
+                 double z)
+{
+    return x >= box.x_min && x <= box.x_max &&
+           y >= box.y_min && y <= box.y_max &&
+           z >= box.z_min && z <= box.z_max;
+}
+} // namespace
+
 // ---------------------------------------------------------------------------
 // Construction
 // ---------------------------------------------------------------------------
@@ -62,7 +74,8 @@ ObstacleManager::getSnapshot(const geometry_msgs::msg::Pose& robot_pose, Diag* d
     if (diag) diag->raw_points   = merged.size();
     if (diag) diag->stale_topics = stale;
 
-    // Crop + height filter (fast AABB, no TF needed — already in target_frame)
+    // Crop + self filter in the robot-local frame. Points stay in target_frame
+    // for WILN's path deformer; only the selection is local to the robot pose.
     auto cropped = cropAndFilter(merged, robot_pose);
 
     // Voxel downsample
@@ -100,17 +113,46 @@ void ObstacleManager::onCloud(sensor_msgs::msg::PointCloud2::ConstSharedPtr msg,
     geometry_msgs::msg::TransformStamped tf_stamped;
 
     if (needs_transform && tf_buffer_) {
+        // 9A: Use message timestamp for TF lookup (not TimePointZero).
+        // At 1.5 m/s, using "latest" vs "at capture time" introduces up to
+        // 15 cm spatial error per 100ms of TF delay — causing false positives
+        // (phantom obstacles) or false negatives (real obstacles shifted out of
+        // the crop box). Fallback to TimePointZero on exception (startup / replay).
+        bool tf_ok = false;
         try {
             tf_stamped = tf_buffer_->lookupTransform(
                 params_.target_frame,
                 msg->header.frame_id,
-                tf2::TimePointZero);
-        } catch (const tf2::TransformException& ex) {
-            RCLCPP_WARN_THROTTLE(node_->get_logger(), *node_->get_clock(), 3000,
-                "ObstacleManager: TF lookup failed for %s: %s",
-                topic.c_str(), ex.what());
-            return;
+                rclcpp::Time(msg->header.stamp),
+                rclcpp::Duration::from_seconds(0.1));
+            tf_ok = true;
+        } catch (const tf2::TransformException&) {}
+
+        if (!tf_ok) {
+            try {
+                tf_stamped = tf_buffer_->lookupTransform(
+                    params_.target_frame,
+                    msg->header.frame_id,
+                    tf2::TimePointZero);
+            } catch (const tf2::TransformException& ex) {
+                RCLCPP_WARN_THROTTLE(node_->get_logger(), *node_->get_clock(), 3000,
+                    "ObstacleManager: TF lookup failed for %s: %s",
+                    topic.c_str(), ex.what());
+                return;
+            }
         }
+    }
+
+    // 9B: Precompute rotation matrix and translation outside the per-point loop.
+    // The transform doesn't change between points — building Quaterniond per-point
+    // at 30K pts/scan × 10 Hz was wasteful.
+    Eigen::Matrix3d rot_matrix = Eigen::Matrix3d::Identity();
+    Eigen::Vector3d translation_vec = Eigen::Vector3d::Zero();
+    if (needs_transform) {
+        const auto& t = tf_stamped.transform.translation;
+        const auto& q = tf_stamped.transform.rotation;
+        rot_matrix = Eigen::Quaterniond(q.w, q.x, q.y, q.z).toRotationMatrix();
+        translation_vec = Eigen::Vector3d(t.x, t.y, t.z);
     }
 
     sensor_msgs::PointCloud2ConstIterator<float> ix(*msg, "x");
@@ -128,11 +170,7 @@ void ObstacleManager::onCloud(sensor_msgs::msg::PointCloud2::ConstSharedPtr msg,
         if (r2 > params_.max_range * params_.max_range) continue;
 
         if (needs_transform) {
-            // Apply TF: T_target_from_sensor
-            const auto& t = tf_stamped.transform.translation;
-            const auto& q = tf_stamped.transform.rotation;
-            Eigen::Quaterniond eq(q.w, q.x, q.y, q.z);
-            p = eq * p + Eigen::Vector3d(t.x, t.y, t.z);
+            p = rot_matrix * p + translation_vec;
         }
 
         pts.push_back(p);
@@ -204,24 +242,32 @@ std::vector<Eigen::Vector3d> ObstacleManager::cropAndFilter(
     double rx = robot_pose.position.x;
     double ry = robot_pose.position.y;
 
-    double half_l = params_.crop_length / 2.0;
-    double half_w = params_.crop_width;
-
     std::vector<Eigen::Vector3d> out;
     out.reserve(pts.size() / 4);
 
     for (const auto& p : pts) {
-        // Height filter first (cheapest)
-        if (p.z() < params_.crop_z_min || p.z() > params_.crop_z_max) continue;
-
-        // Rotate into robot frame
+        // Rotate into robot frame. Roll/pitch are intentionally ignored here:
+        // WILN obstacle gating needs a stable ground-plane crop around the MTT.
         double dx = p.x() - rx;
         double dy = p.y() - ry;
         double local_x =  ca * dx + sa * dy;
         double local_y = -sa * dx + ca * dy;
+        double local_z = p.z() - robot_pose.position.z;
 
-        if (std::abs(local_x) > half_l) continue;
-        if (std::abs(local_y) > half_w) continue;
+        if (local_x < params_.crop_x_min || local_x > params_.crop_x_max) continue;
+        if (std::abs(local_y) > params_.crop_y_abs) continue;
+        if (local_z < params_.crop_z_min || local_z > params_.crop_z_max) continue;
+
+        if (params_.enable_self_filter) {
+            bool is_self = false;
+            for (const auto& box : params_.self_filter_boxes) {
+                if (isInsideBox(box, local_x, local_y, local_z)) {
+                    is_self = true;
+                    break;
+                }
+            }
+            if (is_self) continue;
+        }
 
         out.push_back(p);
     }

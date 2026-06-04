@@ -34,16 +34,31 @@
 namespace wiln {
 
 struct ObstacleParams {
+    struct SelfFilterBox {
+        std::string name;
+        double x_min = 0.0;
+        double x_max = 0.0;
+        double y_min = 0.0;
+        double y_max = 0.0;
+        double z_min = 0.0;
+        double z_max = 0.0;
+    };
+
     std::vector<std::string> lidar_topics = {"/merged_points_filtered"};
     std::string target_frame  = "map";
     double obstacle_max_age_s = 0.5;   // clouds older than this are ignored
     double crop_length        = 25.0;  // [m] forward + backward from robot pose
     double crop_width         = 8.0;   // [m] lateral half-width
-    double crop_z_min         = -0.3;  // [m] in target_frame
-    double crop_z_max         =  2.0;  // [m] in target_frame
+    double crop_x_min         = -12.5; // [m] local robot-frame rear bound
+    double crop_x_max         =  12.5; // [m] local robot-frame forward bound
+    double crop_y_abs         =   8.0; // [m] local robot-frame lateral half-width
+    double crop_z_min         = -0.3;  // [m] local robot-frame height floor
+    double crop_z_max         =  2.0;  // [m] local robot-frame height ceiling
     double voxel_size         = 0.15;  // [m] voxel grid leaf size
     double min_range          = 0.5;   // [m] ignore sensor self-return
     double max_range          = 20.0;  // [m] ignore far noise
+    bool enable_self_filter   = false;
+    std::vector<SelfFilterBox> self_filter_boxes;
 };
 
 // ---------------------------------------------------------------------------

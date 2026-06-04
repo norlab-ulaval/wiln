@@ -1,0 +1,203 @@
+# wiln_params.yaml -- Consolidated parameters for all WILN nodes.
+#
+# Override per-platform with config/platforms/<platform>.yaml.
+# Usage in launch: load this file first, then overlay the platform file.
+#
+# Node name mapping:
+#   wiln_teach_node    -- recording
+#   wiln_route_node    -- save/load .ltr files
+#   wiln_replay_node   -- hot-path 10 Hz horizon + elastic band
+#   wiln_path_follower -- 20 Hz curvature controller
+#   wiln_obstacle_node -- lidar aggregation + filtering
+#   wiln_safety_monitor-- Python watchdog
+
+# ---------------------------------------------------------------------------
+# wiln_teach_node
+# ---------------------------------------------------------------------------
+wiln_teach_node:
+  ros__parameters:
+    odom_topic:             "/mapping/icp_odom"
+    cmd_vel_topic:          "controller/cmd_vel"
+    trajectory_topic:       "/wiln/trajectory"
+    global_plan_topic:      "/wiln/global_plan"
+    command_topic:          "/wiln/command"
+    state_topic:            "/wiln/teach/state"
+
+    # TeachRecorder filter thresholds
+    min_dist_between_poses: 0.10      # [m]   minimum distance between recorded poses
+    min_angle_between_poses: 0.05     # [rad] minimum angle between recorded poses
+    smoothing_window_size:  15        # SE(3) Frechet mean window
+
+# ---------------------------------------------------------------------------
+# wiln_route_node
+# ---------------------------------------------------------------------------
+wiln_route_node:
+  ros__parameters:
+    command_topic:          "/wiln/command"
+    trajectory_topic:       "/wiln/trajectory"
+    global_plan_topic:      "/wiln/global_plan"
+    state_topic:            "/wiln/route/state"
+
+    # Default routes directory (relative to CWD or absolute)
+    routes_dir:             "data/wiln_routes"
+
+    # ICP mapper service names (external — norlab_icp_mapper_ros)
+    save_map_service:       "/mapping/save_map"
+    load_map_service:       "/mapping/load_map"
+    enable_mapping_service: "/mapping/enable_mapping"
+    disable_mapping_service: "/mapping/disable_mapping"
+    create_parent_dirs:     true
+    max_route_step_m:       1.0
+    max_route_yaw_step_rad: 0.8
+    max_route_z_span_m:     2.0
+
+# ---------------------------------------------------------------------------
+# wiln_replay_node
+# ---------------------------------------------------------------------------
+wiln_replay_node:
+  ros__parameters:
+    odom_topic:             "/mapping/icp_odom"
+    obstacles_topic:        "/wiln/obstacles"
+    trajectory_topic:       "/wiln/trajectory"
+    command_topic:          "/wiln/command"
+    articulation_topic:     "/mtt/articulation_angle"   # optional
+
+    control_local_plan_topic: "/wiln/control/local_plan"
+    debug_horizon_topic:    "/wiln/debug/horizon"
+    debug_deformed_topic:   "/wiln/debug/deformed_plan"
+    markers_topic:          "/wiln/markers"
+    state_topic:            "/wiln/replay/state"
+    diagnostics_topic:      "/wiln/replay/diagnostics"
+
+    stream_rate_hz:         10.0
+    trajectory_speed:       0.40      # [m/s] default replay speed
+
+    # Robot model
+    robot_model:            "generic" # "generic" or "mtt"
+
+    # TrajectoryStreamer search window
+    search_window_backward: 10
+    search_window_forward:  80
+
+    # PathDeformer
+    max_deformation_step:   0.25      # [m]  max per-iteration displacement
+    max_total_deformation:  1.0       # [m]  max cumulative displacement from reference
+    time_budget_ms:         8.0       # [ms] budget before fallback to last valid plan
+
+    # Mapper services (called on play/cancel)
+    enable_mapping_service: "/mapping/enable_mapping"
+    disable_mapping_service: "/mapping/disable_mapping"
+
+# ---------------------------------------------------------------------------
+# wiln_path_follower
+# ---------------------------------------------------------------------------
+wiln_path_follower:
+  ros__parameters:
+    odom_topic:             "/mapping/icp_odom"
+    local_plan_topic:       "/wiln/control/local_plan"
+    trajectory_topic:       "/wiln/trajectory"
+    command_topic:          "/wiln/command"
+    replay_state_topic:     "/wiln/replay/state"
+    cmd_vel_topic:          "controller/cmd_vel"
+    state_topic:            "/wiln/follower/state"
+
+    control_rate_hz:        20.0
+
+    # Control gains
+    k_y:                    0.60
+    k_theta:                1.20
+    kappa_max:              0.70      # [1/m] max commanded curvature
+
+    # Waypoint advance
+    advance_distance_m:     0.35
+    waypoint_tolerance_m:   0.35
+    final_heading_tolerance_rad: 0.35
+
+    # Speed
+    default_speed_ms:       0.60
+    max_speed_ms:           0.80
+    min_speed_ms:           0.25
+    slowdown_alpha:         2.0       # speed = v / (1 + alpha * |kappa|)
+
+    # Safety
+    odom_timeout_s:         2.5
+    local_plan_timeout_s:   0.5
+    max_lateral_error_m:    1.25
+    max_heading_error_rad:  1.20
+    max_target_distance_m:  4.0
+    tracking_error_grace_s: 1.0
+
+    # Feedforward and adaptive bias
+    use_path_curvature_feedforward: true
+    use_adaptive_curvature_bias:    false
+    adaptive_kappa_i_gain:          0.03
+    adaptive_kappa_decay:           0.02
+    adaptive_kappa_deadband_m:      0.05
+    adaptive_kappa_bias_limit:      0.18
+
+    # MTT articulation servo (disabled on generic platforms)
+    use_articulation_servo:   false
+    use_speed_servo:          false
+    psi_dot_max_rad_s:        0.5
+
+    # Motion model (slip compensation)
+    l_eq_m:                         2.4
+    psi_max_rad:                    1.047
+    model_use_slip_heuristic:       true
+    model_yaw_slip_base:            0.10
+    model_yaw_slip_speed_gain:      0.05
+    model_yaw_slip_articulation_gain: 0.15
+    model_yaw_slip_min_scale:       0.55
+
+# ---------------------------------------------------------------------------
+# wiln_obstacle_node
+# ---------------------------------------------------------------------------
+wiln_obstacle_node:
+  ros__parameters:
+    odom_topic:             "/mapping/icp_odom"
+    obstacles_topic:        "/wiln/obstacles"
+    publish_rate_hz:        10.0
+
+    # Which lidar topics to subscribe to (list)
+    lidar_topics:
+      - "/merged_points_filtered"
+
+    target_frame:           "map"
+    obstacle_max_age_s:     0.5       # [s]   discard cloud if older than this
+
+    # Crop box around robot
+    crop_length:            25.0      # [m]   fore+aft half-length
+    crop_width:             8.0       # [m]   lateral half-width
+    crop_x_min:            -12.5      # [m]   local robot-frame rear bound
+    crop_x_max:             12.5      # [m]   local robot-frame forward bound
+    crop_y_abs:              8.0      # [m]   local robot-frame lateral half-width
+    crop_z_min:            -0.30      # [m]   height floor
+    crop_z_max:             2.00      # [m]   height ceiling
+
+    # Noise/range filters
+    min_range:              0.50      # [m]   reject sensor self-return
+    max_range:              20.0      # [m]   reject far noise
+
+    # Voxel grid downsampling
+    voxel_size:             0.15      # [m]
+
+    # Optional robot self filters in local robot frame:
+    # [x_min, x_max, y_min, y_max, z_min, z_max]
+    enable_self_filter:     false
+    self_filter_chassis_box: []
+    self_filter_lidar_cage_box: []
+    self_filter_rsairy_box: []
+    self_filter_trailer_box: []
+
+# ---------------------------------------------------------------------------
+# wiln_safety_monitor (Python)
+# ---------------------------------------------------------------------------
+wiln_safety_monitor:
+  ros__parameters:
+    odom_topic:             "/mapping/icp_odom"
+    odom_timeout_s:         3.0
+    check_rate_hz:          5.0
+    estop_topic:            ""        # leave empty to disable
+    icp_score_topic:        ""        # leave empty to disable
+    icp_score_threshold:    0.1
+    icp_score_window_s:     2.0

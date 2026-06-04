@@ -1,0 +1,71 @@
+# config/platforms/mtt.yaml -- MTT (articulated tractor+trailer) parameter overrides.
+#
+# Loaded after wiln_params.yaml in the launch file.
+# Only set values that differ from the generic defaults.
+
+# ---------------------------------------------------------------------------
+# wiln_replay_node
+# ---------------------------------------------------------------------------
+wiln_replay_node:
+  ros__parameters:
+    robot_model:            "mtt"
+    trajectory_speed:       0.40
+
+# ---------------------------------------------------------------------------
+# wiln_path_follower
+# ---------------------------------------------------------------------------
+wiln_path_follower:
+  ros__parameters:
+    # MTT uses articulation servo for closed-loop steering
+    use_articulation_servo:     false    # set true when mtt_articulation_servo_node running
+    use_speed_servo:            false    # set true when mtt_speed_servo_node running
+    psi_dot_max_rad_s:          0.80
+
+    # Speed limits tuned for MTT outdoor operation
+    default_speed_ms:           0.80
+    max_speed_ms:               4.20
+    min_speed_ms:               0.35
+    slowdown_alpha:             1.4
+
+    # MTT articulation geometry
+    l_eq_m:                     2.40
+    psi_max_rad:                1.0472  # 60 degrees
+
+    # Slip heuristic tuned for MTT on outdoor terrain
+    model_use_slip_heuristic:         true
+    model_yaw_slip_base:              0.10
+    model_yaw_slip_speed_gain:        0.05
+    model_yaw_slip_articulation_gain: 0.15
+    model_yaw_slip_min_scale:         0.55
+
+    # Tighter kappa limit for articulated vehicle
+    kappa_max:                  0.70
+
+# ---------------------------------------------------------------------------
+# wiln_obstacle_node
+# ---------------------------------------------------------------------------
+wiln_obstacle_node:
+  ros__parameters:
+    lidar_topics:
+      - "/hesai_lidar/points"
+    crop_x_min:            -0.75
+    crop_x_max:             7.00
+    crop_y_abs:             2.00
+    crop_z_min:            -0.20
+    crop_z_max:             1.80
+    min_range:              0.45
+    max_range:              8.0
+    voxel_size:             0.15
+    enable_self_filter:     true
+    self_filter_chassis_box: [-1.00, 0.80, -0.50, 0.50, -0.30, 0.90]
+    self_filter_lidar_cage_box: [-0.35, 0.25, -0.30, 0.30, 0.50, 1.20]
+    self_filter_rsairy_box: [-0.30, 0.25, 0.55, 1.05, 0.50, 1.20]
+    self_filter_trailer_box: [-4.20, -0.75, -1.35, 1.35, -0.40, 2.50]
+
+# ---------------------------------------------------------------------------
+# wiln_safety_monitor
+# ---------------------------------------------------------------------------
+wiln_safety_monitor:
+  ros__parameters:
+    estop_topic:            ""        # override with /mtt/estop if wired
+    odom_timeout_s:         1.5      # MTT has reliable ICP odom; tighter timeout
