@@ -100,20 +100,12 @@ The framework is divided into two phases: teach and repeat. During the teach pha
 
 During the repeat phase, the robot repeats a given route. This route can either be a map that has just been recorder or a loaded map that was saved on disk. During this phase, the system registers point clouds to the map to localize but does not update the map.
 
-The following table lists the various ROS services that enable the teach-and-repeat framework:
+The current WILN nodes are coordinated through a command topic, not the old
+direct service surface:
 
-| Service name | Description | Parameters |
-| :----------- | :---------- | :--------- |
-| /start_recording | Starts recording poses to build the reference map (cannot be called if another trajectory is already loaded). | None |
-| /stop_recording | Stops the trajectory recording (cannot be called is the recording was not started). | None                 |
-| /clear_trajectory | Clears the current trajectory from active memory. | None                 |
-| /play_line | Starts the repeat phase for the current route. The robot may reverse the route internally if it is closer to the end than to the start. | None |
-| /play_loop | Starts the repeat phase for a loop trajectory. | `nb_loops`           |
-| /cancel_trajectory | Cancels the current repeat phase in the event of system failure. | None  |
-| /save_map_traj | Saves the current map and trajectory in a `.ltr` file. | `file_name` (string) |
-| /load_map_traj | Loads a specified `.ltr` file from its beginning. | `file_name` (string) |
-| /load_map_traj_from_end | Loads a specified `.ltr` file from its end. | `file_name` (string) |
-| /clear_trajectory | Clears the current trajectory from active memory. | None |
+| Topic | Message | Commands |
+| :---- | :------ | :------- |
+| /wiln/command | `std_msgs/String` | `teach_start`, `teach_stop`, `replay`, `replay_loop:<n>`, `cancel`, `save:<path>`, `load:<path>` |
 
 In the MTT demo stack, the operator-facing services are wrapped by the repeat supervisor:
 
@@ -121,7 +113,7 @@ In the MTT demo stack, the operator-facing services are wrapped by the repeat su
 | :----------- | :---------- |
 | /mtt_repeat/teach_start | Start a new teach phase |
 | /mtt_repeat/teach_stop | Stop teach and arm the route in memory |
-| /mtt_repeat/play_line | Start replay if safety, ICP odom, and action server are ready |
+| /mtt_repeat/play_line | Start replay if safety, ICP odom, control mode, and WILN command subscribers are ready |
 | /mtt_repeat/play_loop | Start loop replay |
 | /mtt_repeat/cancel | Cancel replay |
 | /mtt_repeat/mark_ready | Mark a loaded route ready for replay |

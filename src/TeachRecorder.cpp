@@ -10,6 +10,8 @@ TeachRecorder::TeachRecorder(const Params& params) : params_(params) {}
 void TeachRecorder::start() {
     std::lock_guard<std::mutex> lock(data_mutex_);
     trajectory_.paths.clear();
+    rejected_jumps_ = 0;
+    gap_recovery_count_ = 0;
     recording_ = true;
 }
 
@@ -44,6 +46,55 @@ void TeachRecorder::addPose(const geometry_msgs::msg::PoseStamped& pose, bool fo
     double dist = computeDistance(pose.pose.position, last_pose.pose.position);
     double angle_diff = std::abs(extractYaw(pose.pose.orientation) - extractYaw(last_pose.pose.orientation));
     if (angle_diff > M_PI) angle_diff = 2 * M_PI - angle_diff;
+
+    if (dist > params_.max_record_jump_m || angle_diff > params_.max_record_yaw_jump_rad) {
+        ++rejected_jumps_;
+
+        // 11A: Gap recovery — instead of truncating the trajectory permanently, detect
+        // when ICP has stabilised at a new consistent location after a dropout.
+        // Track consecutive poses that stay near a stable anchor point (= ICP just resumed).
+        // After 5 such poses, start a new trajectory segment and reconnect.
+        // The gap appears as a direction-change marker between segments, which replay
+        // handles as a "change direction" event (safe — robot is stationary between segments).
+        const double stable_radius = params_.min_dist_between_poses * 3.0;
+        if (gap_recovery_count_ == 0) {
+            // First rejected pose — set anchor at this position.
+            gap_recovery_anchor_ = pose;
+            gap_recovery_count_ = 1;
+        } else {
+            const double dist_from_anchor = computeDistance(
+                pose.pose.position, gap_recovery_anchor_.pose.position);
+            if (dist_from_anchor <= stable_radius) {
+                // Pose is near anchor — ICP is publishing stable estimates at this location.
+                ++gap_recovery_count_;
+            } else {
+                // Pose jumped again — reset anchor to current position and restart count.
+                gap_recovery_anchor_ = pose;
+                gap_recovery_count_ = 1;
+            }
+        }
+
+        // After 5 stable poses: ICP has recovered. Reconnect by starting a new segment.
+        static constexpr uint32_t kRecoveryStablePoses = 5;
+        if (gap_recovery_count_ >= kRecoveryStablePoses) {
+            // Insert a new DirectionalPath starting at the recovery anchor.
+            // The gap (robot teleport) is represented as a segment boundary.
+            norlab_controllers_msgs::msg::DirectionalPath recovery_path;
+            recovery_path.forward = forward;
+            recovery_path.header  = gap_recovery_anchor_.header;
+            recovery_path.poses.push_back(gap_recovery_anchor_);
+            {
+                // Already under data_mutex_ (called from addPose lock scope).
+                trajectory_.paths.push_back(recovery_path);
+            }
+            last_forward_direction_ = forward;
+            gap_recovery_count_ = 0;
+        }
+        return;
+    }
+
+    // Normal pose — reset gap recovery state.
+    gap_recovery_count_ = 0;
 
     // Change direction?
     if (forward != last_forward_direction_) {
@@ -83,9 +134,14 @@ void TeachRecorder::setTrajectory(const norlab_controllers_msgs::msg::PathSequen
     }
 }
 
-void TeachRecorder::smooth() {
+bool TeachRecorder::smooth() {
     std::lock_guard<std::mutex> lock(data_mutex_);
     const int W = params_.smoothing_window;
+    if (W <= 0) {
+        return true;
+    }
+
+    const auto original_trajectory = trajectory_;
 
     for (auto& path : trajectory_.paths) {
         if (static_cast<int>(path.poses.size()) < 2 * W + 1) continue;
@@ -124,15 +180,41 @@ void TeachRecorder::smooth() {
         }
         path.poses = smoothed_poses;
     }
+
+    if (trajectoryHasLargeJump(trajectory_)) {
+        trajectory_ = original_trajectory;
+        return false;
+    }
+
+    return true;
 }
 
-double TeachRecorder::computeDistance(const geometry_msgs::msg::Point& p1, const geometry_msgs::msg::Point& p2) {
+double TeachRecorder::computeDistance(const geometry_msgs::msg::Point& p1, const geometry_msgs::msg::Point& p2) const {
     return std::sqrt(std::pow(p1.x - p2.x, 2) + std::pow(p1.y - p2.y, 2) + std::pow(p1.z - p2.z, 2));
 }
 
-double TeachRecorder::extractYaw(const geometry_msgs::msg::Quaternion& q) {
+double TeachRecorder::extractYaw(const geometry_msgs::msg::Quaternion& q) const {
     tf2::Quaternion tf_q(q.x, q.y, q.z, q.w);
     return tf2::getYaw(tf_q);
+}
+
+bool TeachRecorder::trajectoryHasLargeJump(
+    const norlab_controllers_msgs::msg::PathSequence& trajectory) const
+{
+    for (const auto& path : trajectory.paths) {
+        for (size_t i = 1; i < path.poses.size(); ++i) {
+            const auto& previous = path.poses[i - 1];
+            const auto& current = path.poses[i];
+            const double dist = computeDistance(current.pose.position, previous.pose.position);
+            double angle_diff = std::abs(
+                extractYaw(current.pose.orientation) - extractYaw(previous.pose.orientation));
+            if (angle_diff > M_PI) angle_diff = 2 * M_PI - angle_diff;
+            if (dist > params_.max_record_jump_m || angle_diff > params_.max_record_yaw_jump_rad) {
+                return true;
+            }
+        }
+    }
+    return false;
 }
 
 } // namespace wiln
