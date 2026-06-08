@@ -129,6 +129,15 @@ target_link_libraries(wiln_route_node     "${cpp_typesupport_target}")
 target_link_libraries(wiln_replay_node    "${cpp_typesupport_target}")
 target_link_libraries(wiln_path_follower  "${cpp_typesupport_target}")
 
+if(BUILD_TESTING)
+    find_package(ament_cmake_gtest REQUIRED)
+    ament_add_gtest(test_path_progress test/test_path_progress.cpp)
+    if(TARGET test_path_progress)
+        target_include_directories(test_path_progress PUBLIC ${WILN_INCLUDE_DIRS})
+        ament_target_dependencies(test_path_progress geometry_msgs)
+    endif()
+endif()
+
 ament_export_dependencies(rosidl_default_runtime)
 
 # -----------------------------------------------------------------------
