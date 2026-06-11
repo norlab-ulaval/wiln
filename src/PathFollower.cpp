@@ -1,7 +1,11 @@
 #include "wiln/PathFollower.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <limits>
+
+#include <tf2/LinearMath/Quaternion.h>
+#include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 
 namespace wiln {
 
@@ -13,7 +17,7 @@ PathFollower::PathFollower() : Node("wiln_path_follower")
     // ----- Parameters -----
     // Topics
     declare_parameter("cmd_vel_topic",      std::string("controller/cmd_vel"));
-    declare_parameter("odom_topic",         std::string("/mapping/icp_odom"));
+    declare_parameter("odom_topic",         std::string("/mapping/icp_measurement"));
     declare_parameter("local_plan_topic",   std::string("/wiln/control/local_plan"));
     declare_parameter("trajectory_topic",   std::string("/wiln/trajectory"));
     declare_parameter("command_topic",      std::string("/wiln/command"));
@@ -24,10 +28,14 @@ PathFollower::PathFollower() : Node("wiln_path_follower")
     declare_parameter("control_rate_hz",    20.0);
 
     // Gains
-    k_y_           = declare_parameter("k_y",         0.6);
-    k_theta_       = declare_parameter("k_theta",     1.2);
-    kappa_max_     = declare_parameter("kappa_max",   0.7);
-    advance_dist_  = declare_parameter("advance_distance_m",          0.35);
+    k_y_           = declare_parameter("k_y",         0.20);
+    k_theta_       = declare_parameter("k_theta",     0.90);
+    kappa_max_     = declare_parameter("kappa_max",   0.35);
+    // Retained as a declared compatibility parameter for older YAML files.
+    // Progress no longer depends on entering a waypoint-radius gate.
+    (void)declare_parameter("advance_distance_m", 0.35);
+    lookahead_distance_m_ = declare_parameter("lookahead_distance_m", 1.0);
+    waypoint_search_ahead_points_ = declare_parameter("waypoint_search_ahead_points", 50);
     waypoint_tol_  = declare_parameter("waypoint_tolerance_m",        0.35);
     final_hdg_tol_ = declare_parameter("final_heading_tolerance_rad", 0.35);
 
@@ -45,6 +53,12 @@ PathFollower::PathFollower() : Node("wiln_path_follower")
     max_target_distance_m_  = declare_parameter("max_target_distance_m",    4.0);
     tracking_error_grace_s_ = declare_parameter("tracking_error_grace_s",   1.0);
     obstacle_gate_timeout_s_= declare_parameter("obstacle_gate_timeout_s",   0.5);
+    join_max_lateral_error_m_ = declare_parameter("join_max_lateral_error_m", 3.0);
+    join_max_heading_error_rad_ = declare_parameter("join_max_heading_error_rad", 1.20);
+    join_capture_lateral_m_ = declare_parameter("join_capture_lateral_m", 0.35);
+    join_capture_heading_rad_ = declare_parameter("join_capture_heading_rad", 0.30);
+    join_speed_ms_ = declare_parameter("join_speed_ms", 0.45);
+    join_timeout_s_ = declare_parameter("join_timeout_s", 35.0);
 
     // Feedforward / adaptive
     use_path_ff_            = declare_parameter("use_path_curvature_feedforward",   true);
@@ -66,8 +80,20 @@ PathFollower::PathFollower() : Node("wiln_path_follower")
     motion_params_.yaw_slip_min_scale     = declare_parameter("model_yaw_slip_min_scale",     0.55);
 
     psi_dot_max_rad_s_     = declare_parameter("psi_dot_max_rad_s",    0.5);
+    articulation_recenter_s_ = declare_parameter("articulation_recenter_s", 8.0);
+    articulation_center_tolerance_rad_ =
+        declare_parameter("articulation_center_tolerance_rad", 0.05);
+    articulation_feedback_timeout_s_ =
+        declare_parameter("articulation_feedback_timeout_s", 0.5);
     use_articulation_servo_= declare_parameter("use_articulation_servo", false);
     use_speed_servo_       = declare_parameter("use_speed_servo",        false);
+    external_command_mux_  = declare_parameter("external_command_mux",   false);
+    fallback_max_s_        = declare_parameter("fallback_max_s",         3.0);
+    fallback_history_s_    = declare_parameter("fallback_history_s",     20.0);
+    fallback_anchor_max_skew_s_ =
+        declare_parameter("fallback_anchor_max_skew_s", 0.15);
+    debug_                 = declare_parameter("debug",                  false);
+    require_deadman_       = declare_parameter("require_deadman",        false);
 
     const std::string cmd_vel_topic    = get_parameter("cmd_vel_topic").as_string();
     const std::string odom_topic       = get_parameter("odom_topic").as_string();
@@ -78,6 +104,12 @@ PathFollower::PathFollower() : Node("wiln_path_follower")
     const std::string state_topic = get_parameter("state_topic").as_string();
     const std::string obstacle_stop_topic = get_parameter("obstacle_stop_topic").as_string();
     const std::string obstacle_slowdown_topic = get_parameter("obstacle_slowdown_topic").as_string();
+    const std::string articulation_feedback_topic = declare_parameter(
+        "articulation_feedback_topic", std::string("/hardware/articulation_angle"));
+    const std::string articulation_setpoint_topic = declare_parameter(
+        "articulation_setpoint_topic", std::string("/mtt_articulation_setpoint"));
+    const std::string speed_setpoint_topic = declare_parameter(
+        "speed_setpoint_topic", std::string("/speed_setpoint"));
     const double control_rate_hz       = get_parameter("control_rate_hz").as_double();
 
     // ----- Callback groups -----
@@ -96,6 +128,29 @@ PathFollower::PathFollower() : Node("wiln_path_follower")
         odom_topic, be_qos,
         [this](nav_msgs::msg::Odometry::SharedPtr m) { onOdom(m); },
         ctrl_opts);
+
+    {
+        const std::string fallback_odom_topic = declare_parameter("fallback_odom_topic", std::string(""));
+        if (!fallback_odom_topic.empty()) {
+            fallback_odom_sub_ = create_subscription<nav_msgs::msg::Odometry>(
+                fallback_odom_topic, be_qos,
+                [this](nav_msgs::msg::Odometry::SharedPtr m) { onFallbackOdom(m); },
+                ctrl_opts);
+            RCLCPP_INFO(get_logger(), "Fallback odom enabled: %s (max %.1f s)",
+                fallback_odom_topic.c_str(), fallback_max_s_);
+        }
+    }
+
+    if (require_deadman_) {
+        const std::string deadman_topic = declare_parameter("deadman_topic",
+            std::string("mtt_control/teleop_deadman"));
+        deadman_sub_ = create_subscription<std_msgs::msg::Bool>(
+            deadman_topic, rel_qos,
+            [this](std_msgs::msg::Bool::SharedPtr m) { onDeadman(m); });
+        RCLCPP_INFO(get_logger(), "Deadman gate enabled: topic=%s", deadman_topic.c_str());
+    } else {
+        declare_parameter("deadman_topic", std::string("mtt_control/teleop_deadman"));
+    }
 
     local_plan_sub_ = create_subscription<nav_msgs::msg::Path>(
         local_plan_topic, rclcpp::QoS(rclcpp::KeepLast(5)).best_effort(),
@@ -121,8 +176,13 @@ PathFollower::PathFollower() : Node("wiln_path_follower")
         obstacle_slowdown_topic, rel_qos,
         [this](std_msgs::msg::Float32::SharedPtr m) { onObstacleSlowdown(m); });
 
+    articulation_feedback_sub_ = create_subscription<std_msgs::msg::Float64>(
+        articulation_feedback_topic, be_qos,
+        [this](std_msgs::msg::Float64::SharedPtr m) { onArticulationFeedback(m); });
+
     // ----- Publishers -----
     cmd_pub_         = create_publisher<geometry_msgs::msg::TwistStamped>(cmd_vel_topic, rel_qos);
+    wiln_command_pub_= create_publisher<std_msgs::msg::String>(command_topic, rel_qos);
     target_pose_pub_ = create_publisher<geometry_msgs::msg::PoseStamped>("~/target_pose", be_qos);
     follower_state_pub_ = create_publisher<wiln::msg::WilnState>(state_topic, transient_qos);
 
@@ -139,10 +199,10 @@ PathFollower::PathFollower() : Node("wiln_path_follower")
     debug_psi_cmd_pub_    = create_publisher<std_msgs::msg::Float64>("~/debug/psi_cmd_rad",           20);
     debug_steering_pub_   = create_publisher<std_msgs::msg::Float64>("~/debug/steering_normalized",   20);
 
-    if (use_articulation_servo_)
-        articulation_pub_ = create_publisher<std_msgs::msg::Float64>("/mtt_articulation_setpoint", 20);
-    if (use_speed_servo_)
-        speed_setpoint_pub_ = create_publisher<std_msgs::msg::Float64>("/speed_setpoint", 20);
+    if (use_articulation_servo_ && !external_command_mux_)
+        articulation_pub_ = create_publisher<std_msgs::msg::Float64>(articulation_setpoint_topic, 20);
+    if (use_speed_servo_ && !external_command_mux_)
+        speed_setpoint_pub_ = create_publisher<std_msgs::msg::Float64>(speed_setpoint_topic, 20);
 
     // ----- 20 Hz control timer -----
     auto period_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
@@ -152,12 +212,14 @@ PathFollower::PathFollower() : Node("wiln_path_follower")
     publishFollowerState(wiln::msg::WilnState::IDLE, "ready");
     RCLCPP_INFO(get_logger(),
         "wiln_path_follower started. odom=%s trajectory=%s command=%s cmd_vel=%s rate=%.0f Hz, speed=%.2f m/s, "
-        "local_plan_topic=%s, obstacle_stop=%s, obstacle_slowdown=%s, psi_max=%.1f deg, slip=%s",
+        "local_plan_topic=%s, obstacle_stop=%s, obstacle_slowdown=%s, psi_max=%.1f deg, "
+        "slip=%s, external_command_mux=%s",
         odom_topic.c_str(), trajectory_topic.c_str(), command_topic.c_str(), cmd_vel_topic.c_str(),
         control_rate_hz, default_speed_, local_plan_topic.c_str(),
         obstacle_stop_topic.c_str(), obstacle_slowdown_topic.c_str(),
         motion_params_.max_articulation_rad * 180.0 / M_PI,
-        motion_params_.use_slip_heuristic ? "on" : "off");
+        motion_params_.use_slip_heuristic ? "on" : "off",
+        external_command_mux_ ? "on" : "off");
 }
 
 // ---------------------------------------------------------------------------
@@ -165,10 +227,76 @@ PathFollower::PathFollower() : Node("wiln_path_follower")
 // ---------------------------------------------------------------------------
 void PathFollower::onOdom(nav_msgs::msg::Odometry::SharedPtr msg)
 {
+    nav_msgs::msg::Odometry fallback_at_icp;
+    bool fallback_available = false;
+    double anchor_skew_s = std::numeric_limits<double>::infinity();
+    {
+        std::lock_guard<std::mutex> fk(fallback_odom_mutex_);
+        const rclcpp::Time icp_time(msg->header.stamp);
+        if (icp_time.nanoseconds() == 0 && fallback_odom_received_) {
+            // Header-less input is not expected, but using the current encoder
+            // pose is preferable to silently accepting an unanchored pose.
+            fallback_at_icp = fallback_odom_;
+            fallback_available = true;
+            anchor_skew_s = 0.0;
+        } else {
+            for (const auto& candidate : fallback_odom_history_) {
+                const double skew = std::abs(
+                    (rclcpp::Time(candidate.header.stamp) - icp_time).seconds());
+                if (skew < anchor_skew_s) {
+                    anchor_skew_s = skew;
+                    fallback_at_icp = candidate;
+                }
+            }
+            fallback_available = anchor_skew_s <= fallback_anchor_max_skew_s_;
+        }
+    }
+
+    if (!fallback_available) {
+        RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 2000,
+            "Ignoring accepted ICP pose: no encoder sample within %.0f ms of scan stamp (best %.0f ms).",
+            fallback_anchor_max_skew_s_ * 1000.0, anchor_skew_s * 1000.0);
+        return;
+    }
+
     std::lock_guard<std::mutex> lk(odom_mutex_);
     latest_odom_  = *msg;
     odom_stamp_   = now();
     odom_received_= true;
+    if (fallback_available) {
+        icp_anchor_fallback_odom_ = fallback_at_icp;
+        icp_anchor_fallback_valid_ = true;
+    }
+}
+
+void PathFollower::onFallbackOdom(nav_msgs::msg::Odometry::SharedPtr msg)
+{
+    std::lock_guard<std::mutex> lk(fallback_odom_mutex_);
+    fallback_odom_          = *msg;
+    fallback_odom_stamp_    = now();
+    fallback_odom_received_ = true;
+
+    const rclcpp::Time sample_time(msg->header.stamp);
+    if (!fallback_odom_history_.empty()) {
+        const rclcpp::Time newest_time(fallback_odom_history_.back().header.stamp);
+        if (sample_time < newest_time) {
+            // Clock reset or an odom publisher restart: old samples cannot be
+            // matched safely to future ICP measurements.
+            fallback_odom_history_.clear();
+        }
+    }
+    fallback_odom_history_.push_back(*msg);
+    while (fallback_odom_history_.size() > 1) {
+        const rclcpp::Time oldest_time(fallback_odom_history_.front().header.stamp);
+        if ((sample_time - oldest_time).seconds() <= fallback_history_s_) break;
+        fallback_odom_history_.pop_front();
+    }
+}
+
+void PathFollower::onDeadman(std_msgs::msg::Bool::SharedPtr msg)
+{
+    std::lock_guard<std::mutex> lk(deadman_mutex_);
+    deadman_held_ = msg->data;
 }
 
 void PathFollower::onLocalPlan(nav_msgs::msg::Path::SharedPtr msg)
@@ -195,12 +323,14 @@ void PathFollower::onCommand(std_msgs::msg::String::SharedPtr msg)
 
 void PathFollower::onReplayState(wiln::msg::WilnState::SharedPtr msg)
 {
-    // If replay_node goes IDLE externally (trajectory completed or cancelled),
-    // we also stop following.
+    std::lock_guard<std::mutex> lk(follow_mutex_);
+    replay_node_playing_ = msg->state == wiln::msg::WilnState::PLAYING;
+    // If replay_node goes IDLE externally (trajectory completed, mapper-freeze
+    // refusal, or cancellation), stop the independent follower as well.
     if (msg->state == wiln::msg::WilnState::IDLE) {
-        std::lock_guard<std::mutex> lk(follow_mutex_);
         if (following_) {
             following_ = false;
+            startArticulationRecenter();
             publishZero();
             publishFollowerState(wiln::msg::WilnState::IDLE, "replay completed");
         }
@@ -223,16 +353,38 @@ void PathFollower::onObstacleSlowdown(std_msgs::msg::Float32::SharedPtr msg)
     obstacle_slowdown_received_ = true;
 }
 
+void PathFollower::onArticulationFeedback(std_msgs::msg::Float64::SharedPtr msg)
+{
+    if (!std::isfinite(msg->data)) {
+        return;
+    }
+    std::lock_guard<std::mutex> lk(articulation_feedback_mutex_);
+    articulation_feedback_rad_ = msg->data;
+    articulation_feedback_stamp_ = now();
+    articulation_feedback_received_ = true;
+}
+
 // ---------------------------------------------------------------------------
 // Command handlers
 // ---------------------------------------------------------------------------
 void PathFollower::handlePlay()
 {
+    {
+        std::lock_guard<std::mutex> lk(follow_mutex_);
+        if (following_ || replay_node_playing_) {
+            RCLCPP_WARN(get_logger(),
+                "Ignoring duplicate play command while replay is already armed or active.");
+            return;
+        }
+    }
+
     norlab_controllers_msgs::msg::PathSequence traj;
     {
         std::lock_guard<std::mutex> lk(traj_mutex_);
         if (!traj_received_ || cached_trajectory_.paths.empty()) {
             RCLCPP_WARN(get_logger(), "play: no trajectory available.");
+            publishFollowerState(
+                wiln::msg::WilnState::IDLE, "play refused: no trajectory");
             return;
         }
         traj = cached_trajectory_;
@@ -245,23 +397,63 @@ void PathFollower::handlePlay()
 
     if (segments.empty()) {
         RCLCPP_WARN(get_logger(), "play: trajectory has no non-empty segments.");
+        publishFollowerState(
+            wiln::msg::WilnState::IDLE, "play refused: trajectory has no poses");
         return;
     }
 
+    // Start from an accepted ICP correction propagated to the current encoder
+    // odom.  Raw fallback odom is in a different drifting frame and must never
+    // be used directly as a map-frame pose.
     nav_msgs::msg::Odometry odom;
-    rclcpp::Time odom_stamp;
-    bool odom_received = false;
+    nav_msgs::msg::Odometry anchor_fallback;
+    bool primary_received = false;
+    bool anchor_valid = false;
+    rclcpp::Time primary_stamp{0, 0, get_clock()->get_clock_type()};
     {
         std::lock_guard<std::mutex> ok(odom_mutex_);
         odom = latest_odom_;
-        odom_stamp = odom_stamp_;
-        odom_received = odom_received_;
+        anchor_fallback = icp_anchor_fallback_odom_;
+        primary_received = odom_received_;
+        anchor_valid = icp_anchor_fallback_valid_;
+        primary_stamp = odom_stamp_;
     }
-    if (!odom_received || (now() - odom_stamp).seconds() > odom_timeout_s_) {
-        RCLCPP_WARN(get_logger(), "play: no fresh odometry available, refusing to follow.");
+    nav_msgs::msg::Odometry fallback_now;
+    bool fb_fresh = false;
+    {
+        std::lock_guard<std::mutex> fk(fallback_odom_mutex_);
+        fb_fresh = fallback_odom_received_ &&
+                   (now() - fallback_odom_stamp_).seconds() <= odom_timeout_s_;
+        fallback_now = fallback_odom_;
+    }
+    const double primary_age = primary_received
+        ? (now() - primary_stamp).seconds()
+        : std::numeric_limits<double>::infinity();
+    if (!primary_received || primary_age > fallback_max_s_ || !anchor_valid || !fb_fresh) {
+        RCLCPP_WARN(get_logger(),
+            "play: no usable accepted ICP anchor (age=%.2fs, anchor=%s, fallback=%s); refusing to follow.",
+            primary_age, anchor_valid ? "yes" : "no", fb_fresh ? "fresh" : "stale");
         publishZero();
-        publishFollowerState(wiln::msg::WilnState::IDLE, "play refused: no fresh odom");
+        publishFollowerState(wiln::msg::WilnState::IDLE, "play refused: no accepted ICP anchor");
         return;
+    }
+    odom.pose.pose = propagateIcpPose(
+        odom.pose.pose, anchor_fallback.pose.pose, fallback_now.pose.pose);
+
+    // WilnReplayNode chooses the closest endpoint and reverses when replay starts
+    // near the taught end. The follower owns a separate cached trajectory, so it
+    // must make the same deterministic choice before constructing active segments.
+    const double dist_to_start = distXY(odom.pose.pose, segments.front().poses.front().pose);
+    const double dist_to_end = distXY(odom.pose.pose, segments.back().poses.back().pose);
+    if (dist_to_end < dist_to_start) {
+        traj = reverseTrajectory(traj);
+        segments.clear();
+        for (const auto& seg : traj.paths) {
+            if (!seg.poses.empty()) segments.push_back(seg);
+        }
+        RCLCPP_INFO(get_logger(),
+            "Follower closer to end (%.2fm < %.2fm) — using reversed trajectory.",
+            dist_to_end, dist_to_start);
     }
 
     // Determine speed from trajectory (fallback to default)
@@ -272,13 +464,35 @@ void PathFollower::handlePlay()
     active_speed_         = speed;
     current_segment_      = 0;
     following_            = true;
+    recenter_active_      = false;
     local_plan_rcvd_once_ = false;
     path_lost_tracking_   = false;
+    fallback_active_      = primary_age > odom_timeout_s_;
     obstacle_hold_state_published_ = false;
     prev_psi_cmd_         = 0.0;
     kappa_adaptive_bias_  = 0.0;
+    joining_path_         = true;
+    join_started_at_      = now();
 
-    waypoint_index_ = findStartIndex(active_segments_[0].poses, odom.pose.pose);
+    progress_index_ = findStartIndex(active_segments_[0].poses, odom.pose.pose);
+    const auto initial_progress = selectPathProgress(
+        active_segments_[0].poses,
+        progress_index_,
+        odom.pose.pose,
+        lookahead_distance_m_,
+        waypoint_search_ahead_points_);
+    progress_index_ = initial_progress.nearest_index;
+    waypoint_index_ = initial_progress.target_index;
+
+    if (debug_) {
+        RCLCPP_INFO(get_logger(),
+            "[DBG] handlePlay: odom=(%.2f,%.2f,yaw=%.1f°) start_wp=%d/%zu segs=%zu speed=%.2f",
+            odom.pose.pose.position.x, odom.pose.pose.position.y,
+            yawFromPose(odom.pose.pose) * 180.0 / M_PI,
+            waypoint_index_,
+            active_segments_[0].poses.size() - 1,
+            active_segments_.size(), active_speed_);
+    }
 
     publishFollowerState(wiln::msg::WilnState::PLAYING, "following");
     RCLCPP_INFO(get_logger(), "Following trajectory (%zu segments, %.2f m/s).",
@@ -288,7 +502,7 @@ void PathFollower::handlePlay()
 void PathFollower::handleCancel()
 {
     std::lock_guard<std::mutex> lk(follow_mutex_);
-    if (!following_) return;
+    startArticulationRecenter();
     following_ = false;
     publishZero();
     publishFollowerState(wiln::msg::WilnState::IDLE, "cancelled");
@@ -299,8 +513,13 @@ void PathFollower::stopFollowing()
 {
     // Called from controlLoop — follow_mutex_ is held by caller.
     following_ = false;
+    startArticulationRecenter();
     publishZero();
     publishFollowerState(wiln::msg::WilnState::IDLE, "trajectory completed");
+    // Keep WilnReplayNode and this follower in the same state. Without this,
+    // a follower path-loss left replay_node PLAYING, and a later play command
+    // restarted only the follower with a newly selected direction.
+    requestReplayCancel();
 }
 
 // ---------------------------------------------------------------------------
@@ -309,7 +528,43 @@ void PathFollower::stopFollowing()
 void PathFollower::controlLoop()
 {
     std::lock_guard<std::mutex> lk(follow_mutex_);
-    if (!following_) return;
+    if (!following_) {
+        if (recenter_active_) {
+            if (std::chrono::steady_clock::now() < recenter_until_) {
+                publishZero();
+                bool centered = false;
+                {
+                    std::lock_guard<std::mutex> ak(articulation_feedback_mutex_);
+                    centered = articulation_feedback_received_ &&
+                        (now() - articulation_feedback_stamp_).seconds() <=
+                            articulation_feedback_timeout_s_ &&
+                        std::abs(articulation_feedback_rad_) <=
+                            articulation_center_tolerance_rad_;
+                }
+                if (centered) {
+                    recenter_active_ = false;
+                    RCLCPP_INFO(get_logger(),
+                        "Physical articulation reached center after replay stop.");
+                }
+            } else {
+                recenter_active_ = false;
+                RCLCPP_WARN(get_logger(),
+                    "Articulation recenter timeout after %.1fs; center command stopped.",
+                    articulation_recenter_s_);
+            }
+        }
+        return;
+    }
+
+    // wiln_replay_node publishes PLAYING only after /mapping/disable_mapping
+    // responds. The follower receives the play command independently, so hold
+    // zero here until map insertion is confirmed frozen.
+    if (!replay_node_playing_) {
+        publishZero();
+        RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 1000,
+            "Waiting for mapper freeze acknowledgement before replay motion.");
+        return;
+    }
 
     bool obstacle_stop = false;
     double obstacle_slowdown = 1.0;
@@ -337,31 +592,99 @@ void PathFollower::controlLoop()
         obstacle_hold_state_published_ = false;
     }
 
-    // --- Get fresh odom ---
-    nav_msgs::msg::Odometry odom;
-    rclcpp::Time odom_t;
+    // --- Deadman gate: if required, hold zero cmd_vel when operator is not present ---
+    if (require_deadman_) {
+        bool held = false;
+        {
+            std::lock_guard<std::mutex> dk(deadman_mutex_);
+            held = deadman_held_;
+        }
+        if (!held) {
+            publishZero();
+            RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 1000,
+                "Deadman not held — holding zero cmd_vel (trajectory still armed).");
+            return;
+        }
+    }
+
+    // --- Continuous pose estimate: accepted ICP anchor + encoder delta ---
+    nav_msgs::msg::Odometry primary_odom;
+    nav_msgs::msg::Odometry anchor_fallback_odom;
+    bool primary_received = false;
+    bool anchor_valid = false;
+    rclcpp::Time primary_stamp{0, 0, get_clock()->get_clock_type()};
     {
         std::lock_guard<std::mutex> ok(odom_mutex_);
-        odom   = latest_odom_;
-        odom_t = odom_stamp_;
+        primary_odom  = latest_odom_;
+        anchor_fallback_odom = icp_anchor_fallback_odom_;
+        primary_received = odom_received_;
+        anchor_valid = icp_anchor_fallback_valid_;
+        primary_stamp = odom_stamp_;
     }
-    if ((now() - odom_t).seconds() > odom_timeout_s_) {
+    nav_msgs::msg::Odometry fallback_now;
+    bool fb_fresh = false;
+    {
+        std::lock_guard<std::mutex> fk(fallback_odom_mutex_);
+        fb_fresh = fallback_odom_received_ && (now() - fallback_odom_stamp_).seconds() <= odom_timeout_s_;
+        fallback_now = fallback_odom_;
+    }
+
+    const double primary_age = primary_received
+        ? (now() - primary_stamp).seconds()
+        : std::numeric_limits<double>::infinity();
+    if (!primary_received || !anchor_valid || !fb_fresh || primary_age > fallback_max_s_) {
         RCLCPP_ERROR_THROTTLE(get_logger(), *get_clock(), 2000,
-            "Odometry stale! Stopping for safety.");
+            "Pose estimate unavailable: accepted ICP age=%.2fs (max %.2fs), anchor=%s, fallback=%s — stopping.",
+            primary_age, fallback_max_s_, anchor_valid ? "yes" : "no",
+            fb_fresh ? "fresh" : "stale");
         stopFollowing();
         return;
     }
 
-    const auto& robot_pose = odom.pose.pose;
+    const bool bridging = primary_age > odom_timeout_s_;
+    if (bridging != fallback_active_) {
+        fallback_active_ = bridging;
+        if (bridging) {
+            RCLCPP_WARN(get_logger(),
+                "Accepted ICP correction stale; continuing from its anchor with encoder odom (max %.1fs).",
+                fallback_max_s_);
+        } else {
+            RCLCPP_INFO(get_logger(), "Accepted ICP correction recovered; encoder anchor refreshed.");
+        }
+    }
+    geometry_msgs::msg::Pose robot_pose = propagateIcpPose(
+        primary_odom.pose.pose,
+        anchor_fallback_odom.pose.pose,
+        fallback_now.pose.pose);
+
     const double robot_yaw = yawFromPose(robot_pose);
 
     auto& segment = active_segments_[current_segment_];
     const bool forward       = segment.forward;
     const bool final_segment = (current_segment_ == static_cast<int>(active_segments_.size()) - 1);
 
-    // --- Advance waypoint on global path ---
-    waypoint_index_ = advanceWaypointIndex(segment.poses, waypoint_index_, robot_pose);
+    // --- Recover monotone progress and select an arc-length lookahead target ---
+    // This deliberately does not require the robot to enter a tiny waypoint
+    // radius.  A missed sample is skipped once a later sample is closer, so a
+    // waypoint behind the robot can never make the controller turn back.
+    const auto global_progress = selectPathProgress(
+        segment.poses,
+        progress_index_,
+        robot_pose,
+        lookahead_distance_m_,
+        waypoint_search_ahead_points_);
+    progress_index_ = global_progress.nearest_index;
+    waypoint_index_ = global_progress.target_index;
     const auto& global_target = segment.poses[waypoint_index_];
+
+    if (debug_) {
+        RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 500,
+            "[DBG] seg=%d wp=%d/%zu robot=(%.2f,%.2f,yaw=%.1f°) fwd=%d",
+            current_segment_, waypoint_index_,
+            static_cast<size_t>(segment.poses.size() - 1),
+            robot_pose.position.x, robot_pose.position.y, robot_yaw * 180.0 / M_PI,
+            static_cast<int>(forward));
+    }
 
     // --- Choose steering target (local plan or global fallback) ---
     nav_msgs::msg::Path local_plan;
@@ -374,35 +697,104 @@ void PathFollower::controlLoop()
     }
 
     geometry_msgs::msg::PoseStamped target_pose;
+    geometry_msgs::msg::PoseStamped nearest_path_pose;
     std::vector<geometry_msgs::msg::PoseStamped>* active_poses = nullptr;
     int active_index = 0;
 
     if (local_plan_fresh && !local_plan.poses.empty()) {
         local_plan_rcvd_once_ = true;
-        int li = findStartIndex(local_plan.poses, robot_pose);
-        li = advanceWaypointIndex(local_plan.poses, li, robot_pose);
+        const int local_nearest = findStartIndex(local_plan.poses, robot_pose);
+        const auto local_progress = selectPathProgress(
+            local_plan.poses,
+            local_nearest,
+            robot_pose,
+            lookahead_distance_m_,
+            waypoint_search_ahead_points_);
+        const int li = local_progress.target_index;
         target_pose  = local_plan.poses[li];
+        nearest_path_pose = local_plan.poses[local_progress.nearest_index];
         active_poses = &local_plan.poses;
         active_index = li;
+        if (debug_) {
+            RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 500,
+                "[DBG] using LOCAL PLAN idx=%d/%zu", li, local_plan.poses.size() - 1);
+        }
     } else if (local_plan_rcvd_once_) {
         RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 2000,
-            "Local plan stale — safety stop.");
+            "Local plan stale — holding zero cmd_vel.");
         publishZero();
         return;
     } else {
         // Fallback to global path before first local plan is received
         target_pose  = global_target;
+        nearest_path_pose = segment.poses[global_progress.nearest_index];
         active_poses = &segment.poses;
         active_index = waypoint_index_;
+        if (debug_) {
+            RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 500,
+                "[DBG] using GLOBAL PATH wp=%d tgt=(%.2f,%.2f,yaw=%.1f°)",
+                waypoint_index_,
+                target_pose.pose.position.x, target_pose.pose.position.y,
+                yawFromPose(target_pose.pose) * 180.0 / M_PI);
+        }
     }
 
     // --- Publish target pose for debug ---
     target_pose_pub_->publish(target_pose);
 
-    // --- Tracking errors ---
-    auto errs = computeTrackingErrors(robot_pose, robot_yaw, target_pose, forward);
+    // --- Tracking errors relative to the path, not to the lookahead point ---
+    // Longitudinal lookahead is intentional and must not be misclassified as
+    // path loss.  Cross-track distance and heading are measured at the nearest
+    // monotone path sample; the lookahead target is used only for control.
+    auto errs = computePathTrackingErrors(
+        robot_pose, robot_yaw, nearest_path_pose, forward);
+    if (debug_) {
+        RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 500,
+            "[DBG] tracking e_y=%.2fm e_th=%.1f° dist=%.2fm (limits: lat=%.1f head=%.1f°)",
+            errs.lateral_m, errs.heading_rad * 180.0 / M_PI, errs.distance_m,
+            max_lateral_error_m_, max_heading_error_rad_ * 180.0 / M_PI);
+    }
 
-    if (trackingErrorExceeded(errs)) {
+    const double join_elapsed_s = (now() - join_started_at_).seconds();
+    if (joining_path_ &&
+        std::abs(errs.lateral_m) <= join_capture_lateral_m_ &&
+        std::abs(errs.heading_rad) <= join_capture_heading_rad_)
+    {
+        joining_path_ = false;
+        path_lost_tracking_ = false;
+        RCLCPP_INFO(get_logger(),
+            "Route captured after %.2fs: lateral=%.2fm heading=%.1fdeg progress=%d/%zu.",
+            join_elapsed_s,
+            errs.lateral_m,
+            errs.heading_rad * 180.0 / M_PI,
+            progress_index_,
+            segment.poses.size() - 1);
+    }
+
+    if (joining_path_) {
+        const bool outside_join_envelope =
+            std::abs(errs.lateral_m) > join_max_lateral_error_m_ ||
+            std::abs(errs.heading_rad) > join_max_heading_error_rad_;
+        if (outside_join_envelope || join_elapsed_s > join_timeout_s_) {
+            RCLCPP_ERROR(get_logger(),
+                "Unable to capture route: lateral=%.2fm (max %.2f), heading=%.1fdeg (max %.1f), elapsed=%.1fs (max %.1f).",
+                errs.lateral_m,
+                join_max_lateral_error_m_,
+                errs.heading_rad * 180.0 / M_PI,
+                join_max_heading_error_rad_ * 180.0 / M_PI,
+                join_elapsed_s,
+                join_timeout_s_);
+            stopFollowing();
+            return;
+        }
+        RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 1000,
+            "Capturing route: lateral=%.2fm heading=%.1fdeg nearest=%d target=%d speed<=%.2fm/s.",
+            errs.lateral_m,
+            errs.heading_rad * 180.0 / M_PI,
+            progress_index_,
+            waypoint_index_,
+            join_speed_ms_);
+    } else if (trackingErrorExceeded(errs)) {
         if (!path_lost_tracking_) {
             path_lost_since_    = now();
             path_lost_tracking_ = true;
@@ -424,13 +816,23 @@ void PathFollower::controlLoop()
         segmentComplete(robot_pose, robot_yaw, global_target, forward, final_segment))
     {
         if (final_segment) {
+            if (debug_) {
+                RCLCPP_INFO(get_logger(),
+                    "[DBG] Trajectory completed. robot=(%.2f,%.2f) target=(%.2f,%.2f) dist=%.2fm",
+                    robot_pose.position.x, robot_pose.position.y,
+                    global_target.pose.position.x, global_target.pose.position.y,
+                    distXY(robot_pose, global_target.pose));
+            }
             RCLCPP_INFO(get_logger(), "Trajectory completed.");
             stopFollowing();
             return;
         } else {
             current_segment_++;
-            waypoint_index_ = findStartIndex(
+            progress_index_ = findStartIndex(
                 active_segments_[current_segment_].poses, robot_pose);
+            waypoint_index_ = progress_index_;
+            joining_path_ = true;
+            join_started_at_ = now();
             RCLCPP_INFO(get_logger(), "Advancing to segment %d.", current_segment_);
             return;
         }
@@ -444,9 +846,12 @@ void PathFollower::controlLoop()
     kappa_adaptive_bias_ = updateAdaptiveBias(errs.lateral_m, dt, kappa_adaptive_bias_);
 
     // --- Compute control ---
+    const double commanded_speed = joining_path_
+        ? std::min(active_speed_, join_speed_ms_)
+        : active_speed_;
     auto ctrl = computeControl(
         robot_pose, robot_yaw, target_pose, forward,
-        active_speed_, prev_psi_cmd_,
+        commanded_speed, prev_psi_cmd_,
         kappa_ff, kappa_adaptive_bias_, dt);
 
     prev_psi_cmd_ = ctrl.psi_cmd;
@@ -520,14 +925,26 @@ int PathFollower::findStartIndex(
     return best;
 }
 
-int PathFollower::advanceWaypointIndex(
-    const std::vector<geometry_msgs::msg::PoseStamped>& poses,
-    int idx, const geometry_msgs::msg::Pose& robot_pose) const
+norlab_controllers_msgs::msg::PathSequence PathFollower::reverseTrajectory(
+    const norlab_controllers_msgs::msg::PathSequence& trajectory)
 {
-    while (idx < static_cast<int>(poses.size()) - 1 &&
-           distXY(robot_pose, poses[idx].pose) < advance_dist_)
-        ++idx;
-    return idx;
+    auto reversed = trajectory;
+    std::reverse(reversed.paths.begin(), reversed.paths.end());
+
+    tf2::Quaternion half_turn;
+    half_turn.setRPY(0.0, 0.0, M_PI);
+    for (auto& path : reversed.paths) {
+        std::reverse(path.poses.begin(), path.poses.end());
+        path.forward = !path.forward;
+        for (auto& pose_stamped : path.poses) {
+            tf2::Quaternion orientation;
+            tf2::fromMsg(pose_stamped.pose.orientation, orientation);
+            orientation = half_turn * orientation;
+            orientation.normalize();
+            pose_stamped.pose.orientation = tf2::toMsg(orientation);
+        }
+    }
+    return reversed;
 }
 
 double PathFollower::pathCurvature(
@@ -565,18 +982,20 @@ bool PathFollower::segmentComplete(
     return std::abs(hdg_err) <= final_hdg_tol_;
 }
 
-PathFollower::TrackingErrors PathFollower::computeTrackingErrors(
-    const geometry_msgs::msg::Pose& robot_pose, double robot_yaw,
-    const geometry_msgs::msg::PoseStamped& target, bool forward)
+PathFollower::TrackingErrors PathFollower::computePathTrackingErrors(
+    const geometry_msgs::msg::Pose& robot_pose,
+    double robot_yaw,
+    const geometry_msgs::msg::PoseStamped& nearest_path_pose,
+    bool forward)
 {
-    const double theta_eff = forward ? robot_yaw : wrapToPi(robot_yaw + M_PI);
-    const double tgt_yaw   = yawFromPose(target.pose);
-    const double tgt_eff   = forward ? tgt_yaw : wrapToPi(tgt_yaw + M_PI);
-    const double dx = target.pose.position.x - robot_pose.position.x;
-    const double dy = target.pose.position.y - robot_pose.position.y;
+    const double path_yaw = yawFromPose(nearest_path_pose.pose);
+    const double path_eff = forward ? path_yaw : wrapToPi(path_yaw + M_PI);
+    const double robot_eff = forward ? robot_yaw : wrapToPi(robot_yaw + M_PI);
+    const double dx = robot_pose.position.x - nearest_path_pose.pose.position.x;
+    const double dy = robot_pose.position.y - nearest_path_pose.pose.position.y;
     return {
-        -std::sin(theta_eff)*dx + std::cos(theta_eff)*dy,
-        wrapToPi(tgt_eff - theta_eff),
+        -std::sin(path_eff) * dx + std::cos(path_eff) * dy,
+        wrapToPi(path_eff - robot_eff),
         std::hypot(dx, dy)
     };
 }
@@ -606,16 +1025,48 @@ void PathFollower::publishZero()
     geometry_msgs::msg::TwistStamped zero;
     zero.header.stamp = now();
     cmd_pub_->publish(zero);
+    if (use_articulation_servo_ && !external_command_mux_ && articulation_pub_) {
+        std_msgs::msg::Float64 center;
+        center.data = 0.0;
+        articulation_pub_->publish(center);
+    }
+    if (use_speed_servo_ && !external_command_mux_ && speed_setpoint_pub_) {
+        std_msgs::msg::Float64 stop;
+        stop.data = 0.0;
+        speed_setpoint_pub_->publish(stop);
+    }
+}
+
+void PathFollower::startArticulationRecenter()
+{
+    const bool articulation_command_available =
+        use_articulation_servo_ || external_command_mux_;
+    if (!articulation_command_available || articulation_recenter_s_ <= 0.0) {
+        recenter_active_ = false;
+        return;
+    }
+    recenter_active_ = true;
+    recenter_until_ = std::chrono::steady_clock::now()
+        + std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+            std::chrono::duration<double>(articulation_recenter_s_));
+}
+
+void PathFollower::requestReplayCancel()
+{
+    if (!wiln_command_pub_) return;
+    std_msgs::msg::String cancel;
+    cancel.data = "cancel";
+    wiln_command_pub_->publish(cancel);
 }
 
 void PathFollower::publishCommand(double linear_x, double steer_norm, double psi_cmd)
 {
-    if (use_articulation_servo_ && articulation_pub_) {
+    if (use_articulation_servo_ && !external_command_mux_ && articulation_pub_) {
         std_msgs::msg::Float64 setpt;
         setpt.data = psi_cmd;
         articulation_pub_->publish(setpt);
     }
-    if (use_speed_servo_ && speed_setpoint_pub_) {
+    if (use_speed_servo_ && !external_command_mux_ && speed_setpoint_pub_) {
         std_msgs::msg::Float64 spd;
         spd.data = std::abs(linear_x);
         speed_setpoint_pub_->publish(spd);
@@ -623,7 +1074,8 @@ void PathFollower::publishCommand(double linear_x, double steer_norm, double psi
     geometry_msgs::msg::TwistStamped cmd;
     cmd.header.stamp   = now();
     cmd.twist.linear.x = linear_x;
-    cmd.twist.angular.z = use_articulation_servo_ ? 0.0 : steer_norm;
+    cmd.twist.angular.z =
+        (external_command_mux_ || !use_articulation_servo_) ? steer_norm : 0.0;
     cmd_pub_->publish(cmd);
 }
 
@@ -657,6 +1109,41 @@ void PathFollower::publishFollowerState(uint8_t state_code, const std::string& d
     msg.state  = state_code;
     msg.detail = detail;
     follower_state_pub_->publish(msg);
+}
+
+// ---------------------------------------------------------------------------
+// Fallback dead-reckoning
+// ---------------------------------------------------------------------------
+geometry_msgs::msg::Pose PathFollower::propagateIcpPose(
+    const geometry_msgs::msg::Pose& icp_ref,
+    const geometry_msgs::msg::Pose& fb_ref,
+    const geometry_msgs::msg::Pose& fb_now)
+{
+    // Encoder deltas in encoder-odom frame
+    const double dx_fb   = fb_now.position.x - fb_ref.position.x;
+    const double dy_fb   = fb_now.position.y - fb_ref.position.y;
+    const double yaw_fb0 = yawFromPose(fb_ref);
+    const double yaw_icp0= yawFromPose(icp_ref);
+    const double dyaw    = yawFromPose(fb_now) - yaw_fb0;
+
+    // Rotate encoder delta into map frame using heading difference at switch time
+    const double rot   = yaw_icp0 - yaw_fb0;
+    const double dx_map = dx_fb * std::cos(rot) - dy_fb * std::sin(rot);
+    const double dy_map = dx_fb * std::sin(rot) + dy_fb * std::cos(rot);
+
+    const double yaw_est = yaw_icp0 + dyaw;
+    const double cy = std::cos(yaw_est * 0.5);
+    const double sy = std::sin(yaw_est * 0.5);
+
+    geometry_msgs::msg::Pose est;
+    est.position.x    = icp_ref.position.x + dx_map;
+    est.position.y    = icp_ref.position.y + dy_map;
+    est.position.z    = icp_ref.position.z;
+    est.orientation.w = cy;
+    est.orientation.x = 0.0;
+    est.orientation.y = 0.0;
+    est.orientation.z = sy;
+    return est;
 }
 
 double PathFollower::yawFromPose(const geometry_msgs::msg::Pose& pose)
