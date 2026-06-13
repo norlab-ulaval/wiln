@@ -21,6 +21,8 @@ public:
         double max_record_jump_m = 1.0;
         double max_record_yaw_jump_rad = 0.8;
         int smoothing_window = 15;
+        // Arc-length resampling spacing after smoothing. Set ≤ 0 to disable.
+        double resample_spacing_m = 0.10;
     };
 
     explicit TeachRecorder(const Params& params);
@@ -69,6 +71,15 @@ private:
     double computeDistance(const geometry_msgs::msg::Point& p1, const geometry_msgs::msg::Point& p2) const;
     double extractYaw(const geometry_msgs::msg::Quaternion& q) const;
     bool trajectoryHasLargeJump(const norlab_controllers_msgs::msg::PathSequence& trajectory) const;
+
+    /**
+     * @brief Resample each segment at constant arc-length using geodesic SE(3)
+     *        interpolation: T(t) = T1 · Exp(t · Log(T1⁻¹ · T2)).
+     *
+     * Called internally at the end of smooth() when resample_spacing_m > 0.
+     * Must be called with data_mutex_ already held.
+     */
+    void resampleArcLength();
 };
 
 } // namespace wiln
