@@ -105,7 +105,15 @@ void TeachRecorder::addPose(const geometry_msgs::msg::PoseStamped& pose, bool fo
         trajectory_.paths.push_back(new_path);
         last_forward_direction_ = forward;
     }
-    // Large rotation?
+    // A normal driven turn changes both position and yaw. Record it in the
+    // current directional segment so replay sees one continuous curve.  The old
+    // ordering tested yaw first and split tight turns into a new segment every
+    // few centimetres, which destroyed path continuity.
+    else if (dist >= params_.min_dist_between_poses) {
+        current_path.poses.push_back(pose);
+    }
+    // Orientation-only motion: keep an explicit segment boundary only when the
+    // robot has not translated enough to be a normal driven curve.
     else if (angle_diff > params_.min_angle_between_poses) {
         norlab_controllers_msgs::msg::DirectionalPath new_path;
         new_path.forward = forward;
@@ -114,10 +122,6 @@ void TeachRecorder::addPose(const geometry_msgs::msg::PoseStamped& pose, bool fo
         rotated_pose.pose.position = last_pose.pose.position;
         new_path.poses.push_back(rotated_pose);
         trajectory_.paths.push_back(new_path);
-    }
-    // Just distance
-    else if (dist >= params_.min_dist_between_poses) {
-        current_path.poses.push_back(pose);
     }
 }
 
@@ -186,7 +190,73 @@ bool TeachRecorder::smooth() {
         return false;
     }
 
+    // Geodesic arc-length resampling: produce evenly-spaced poses so the
+    // path follower gets a smooth, gap-free reference.
+    if (params_.resample_spacing_m > 0.0) {
+        resampleArcLength();
+    }
+
     return true;
+}
+
+void TeachRecorder::resampleArcLength()
+{
+    // Must be called with data_mutex_ already held (called from smooth()).
+    const double spacing = params_.resample_spacing_m;
+    if (spacing <= 0.0) return;
+
+    for (auto& path : trajectory_.paths) {
+        if (path.poses.size() < 2) continue;
+
+        std::vector<geometry_msgs::msg::PoseStamped> resampled;
+        resampled.reserve(path.poses.size() * 2);  // rough upper bound
+
+        // Always keep the first pose exactly.
+        resampled.push_back(path.poses[0]);
+        double accumulated = 0.0;
+
+        for (size_t i = 1; i < path.poses.size(); ++i) {
+            const geometry_msgs::msg::PoseStamped& p0 = path.poses[i - 1];
+            const geometry_msgs::msg::PoseStamped& p1 = path.poses[i];
+
+            const double seg_len = computeDistance(p0.pose.position, p1.pose.position);
+            if (seg_len < 1e-6) continue;  // degenerate segment — skip
+
+            const Eigen::Matrix4d T0 = se3::fromPose(p0.pose);
+            const Eigen::Matrix4d T1 = se3::fromPose(p1.pose);
+
+            // How far along this segment is the next sample target?
+            double t = (spacing - accumulated) / seg_len;
+            while (t <= 1.0) {
+                // Geodesic interpolation: T(t) = T0 · Exp(t · Log(T0⁻¹ · T1))
+                Eigen::Matrix4d T_interp = se3::InterpolateSE3(T0, T1, t);
+
+                geometry_msgs::msg::PoseStamped interpolated = p0;
+                interpolated.header = p1.header;  // adopt the timestamp of p1
+                interpolated.pose = se3::toPose<geometry_msgs::msg::Pose>(T_interp);
+                resampled.push_back(interpolated);
+
+                t += spacing / seg_len;
+            }
+
+            // Accumulate the remainder of this segment for the next
+            accumulated = seg_len * (1.0 - (t - spacing / seg_len));
+        }
+
+        // Always keep the last pose exactly (preserve segment endpoint).
+        if (!path.poses.empty()) {
+            const auto& last_recorded = path.poses.back();
+            const auto& last_resampled = resampled.back();
+            const double d = computeDistance(
+                last_recorded.pose.position, last_resampled.pose.position);
+            // Only append if meaningfully different (avoid duplicate end pose)
+            if (d > spacing * 0.1) {
+                resampled.push_back(last_recorded);
+            }
+        }
+
+        path.poses = std::move(resampled);
+    }
 }
 
 double TeachRecorder::computeDistance(const geometry_msgs::msg::Point& p1, const geometry_msgs::msg::Point& p2) const {
