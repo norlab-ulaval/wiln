@@ -9,6 +9,13 @@
  *
  * Consumers (e.g. wiln_replay_node) subscribe to /wiln/obstacles and are
  * fully decoupled from this node -- no shared memory, no services.
+ *
+ * Threading model (3-thread MultiThreadedExecutor):
+ *   lidar_cb_group_   : Reentrant — N LiDAR subscribers run in parallel;
+ *                       TF lookups inside onCloud() don't block each other.
+ *   control_cb_group_ : MutuallyExclusive — odom sub + publish timer stay
+ *                       sequential so a slow TF in a LiDAR callback cannot
+ *                       delay the obstacle publish rate.
  */
 
 #include <memory>
@@ -33,6 +40,10 @@ public:
     WilnObstacleNode();
 
 private:
+    // Callback groups — must be constructed before any subscriber/timer
+    rclcpp::CallbackGroup::SharedPtr lidar_cb_group_;    // Reentrant: parallel LiDAR callbacks
+    rclcpp::CallbackGroup::SharedPtr control_cb_group_;  // MutuallyExclusive: odom + publish timer
+
     // TF
     std::shared_ptr<tf2_ros::Buffer>            tf_buffer_;
     std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
