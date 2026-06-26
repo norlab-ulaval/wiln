@@ -113,18 +113,20 @@ void ObstacleManager::onCloud(sensor_msgs::msg::PointCloud2::ConstSharedPtr msg,
     geometry_msgs::msg::TransformStamped tf_stamped;
 
     if (needs_transform && tf_buffer_) {
-        // 9A: Use message timestamp for TF lookup (not TimePointZero).
-        // At 1.5 m/s, using "latest" vs "at capture time" introduces up to
-        // 15 cm spatial error per 100ms of TF delay — causing false positives
-        // (phantom obstacles) or false negatives (real obstacles shifted out of
-        // the crop box). Fallback to TimePointZero on exception (startup / replay).
+        // 9A: Try exact message timestamp first with a short (10ms) timeout.
+        // In normal live operation TF is available within 1-2ms, so this
+        // returns immediately. The 10ms cap prevents the LiDAR callback from
+        // blocking the single-threaded spin for a full 100ms per scan (was
+        // 1s of blocked time per second at 10 Hz). Falls back to TimePointZero
+        // on timeout (bag replay, startup) — 10 ms × 1.5 m/s = 1.5 cm positional
+        // error, well within the 15cm voxel grid.
         bool tf_ok = false;
         try {
             tf_stamped = tf_buffer_->lookupTransform(
                 params_.target_frame,
                 msg->header.frame_id,
                 rclcpp::Time(msg->header.stamp),
-                rclcpp::Duration::from_seconds(0.1));
+                rclcpp::Duration::from_seconds(0.010));
             tf_ok = true;
         } catch (const tf2::TransformException&) {}
 
