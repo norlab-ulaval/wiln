@@ -9,6 +9,10 @@ namespace wiln {
 // ---------------------------------------------------------------------------
 WilnObstacleNode::WilnObstacleNode() : Node("wiln_obstacle_node")
 {
+    // Callback groups: LiDAR subs are Reentrant (may block on TF, must not
+    // starve odom/timer); odom + publish timer are MutuallyExclusive.
+    lidar_cb_group_   = create_callback_group(rclcpp::CallbackGroupType::Reentrant);
+    control_cb_group_ = create_callback_group(rclcpp::CallbackGroupType::MutuallyExclusive);
     // --- Declare parameters ---
     declare_parameter<std::vector<std::string>>("lidar_topics",
         std::vector<std::string>{"/merged_points_filtered"});
@@ -78,23 +82,27 @@ WilnObstacleNode::WilnObstacleNode() : Node("wiln_obstacle_node")
     tf_buffer_   = std::make_shared<tf2_ros::Buffer>(get_clock());
     tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
 
-    // --- Obstacle manager (subscribes to lidar topics internally) ---
-    obstacle_manager_ = std::make_unique<ObstacleManager>(this, params, tf_buffer_);
+    // --- Obstacle manager (subscribes to lidar topics on lidar_cb_group_) ---
+    obstacle_manager_ = std::make_unique<ObstacleManager>(this, params, tf_buffer_, lidar_cb_group_);
 
-    // --- Odometry subscription (for robot pose used to crop obstacles) ---
+    // --- Odometry subscription (control group — not blocked by LiDAR TF waits) ---
     auto odom_qos = rclcpp::QoS(rclcpp::KeepLast(10)).best_effort().durability_volatile();
+    rclcpp::SubscriptionOptions ctrl_opts;
+    ctrl_opts.callback_group = control_cb_group_;
     odom_sub_ = create_subscription<nav_msgs::msg::Odometry>(
         odom_topic, odom_qos,
-        [this](nav_msgs::msg::Odometry::SharedPtr msg) { onOdom(msg); });
+        [this](nav_msgs::msg::Odometry::SharedPtr msg) { onOdom(msg); },
+        ctrl_opts);
 
     // --- Obstacle cloud publisher ---
     auto pub_qos = rclcpp::QoS(rclcpp::KeepLast(1)).best_effort().durability_volatile();
     obstacles_pub_ = create_publisher<sensor_msgs::msg::PointCloud2>(obstacles_topic, pub_qos);
 
-    // --- Publish timer ---
+    // --- Publish timer (control group — guaranteed 10 Hz regardless of LiDAR load) ---
     auto period_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
         std::chrono::duration<double>(1.0 / publish_rate_hz));
-    publish_timer_ = create_wall_timer(period_ns, [this]() { publishObstacles(); });
+    publish_timer_ = create_wall_timer(period_ns, [this]() { publishObstacles(); },
+        control_cb_group_);
 
     RCLCPP_INFO(get_logger(),
         "wiln_obstacle_node started. odom=%s obstacles=%s %zu lidar topic(s), frame='%s', rate=%.0f Hz, crop=[x %.2f..%.2f y +/-%.2f z %.2f..%.2f], self_filter=%s (%zu boxes).",
@@ -182,7 +190,19 @@ sensor_msgs::msg::PointCloud2 WilnObstacleNode::toPointCloud2(
 int main(int argc, char** argv)
 {
     rclcpp::init(argc, argv);
-    rclcpp::spin(std::make_shared<wiln::WilnObstacleNode>());
+    auto node = std::make_shared<wiln::WilnObstacleNode>();
+
+    // 3-thread executor:
+    //   Thread 1–2 : Reentrant lidar_cb_group_ — up to 2 LiDAR callbacks in
+    //                parallel (TF lookups per-scan do not block each other).
+    //   Thread 3   : MutuallyExclusive control_cb_group_ — odom + publish
+    //                timer run sequentially, guaranteed 10 Hz cadence even
+    //                when LiDAR TF is slow (bag replay, startup).
+    rclcpp::executors::MultiThreadedExecutor executor(
+        rclcpp::ExecutorOptions{}, 3);
+    executor.add_node(node);
+    executor.spin();
+
     rclcpp::shutdown();
     return 0;
 }
