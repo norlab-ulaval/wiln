@@ -52,7 +52,7 @@ private:
     std::shared_ptr<RobotModel>         robot_model_;
 
     // ----- Hot-path state (PLAYING or IDLE) -----
-    enum class State : uint8_t { IDLE = 0, PLAYING = 2 };
+    enum class State : uint8_t { IDLE = 0, PREPARING = 1, PLAYING = 2 };
     std::atomic<State> state_{State::IDLE};
 
     // ----- Latest robot pose (lock-free pointer swap) -----
@@ -100,6 +100,10 @@ private:
     // ----- Params -----
     std::string control_local_plan_topic_;
     double      trajectory_speed_{0.40};
+    double      max_start_distance_m_{3.0};
+    bool        enable_deformation_{true};  // false = skip deformer, publish raw horizon
+    bool        reenable_mapping_on_stop_{true};
+    bool        debug_{false};
 
     // ----- Callbacks -----
     void onOdom(nav_msgs::msg::Odometry::SharedPtr msg);
@@ -115,6 +119,7 @@ private:
     void handlePlay();
     void handleCancel();
     void stopReplay();
+    void startAfterMappingDisabled();
 
     // ----- Helpers -----
     norlab_controllers_msgs::msg::PathSequence reverseTrajectory(
