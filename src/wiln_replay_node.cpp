@@ -1,5 +1,6 @@
 #include "wiln/WilnReplayNode.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 
@@ -20,6 +21,7 @@ WilnReplayNode::WilnReplayNode() : Node("wiln_replay_node")
 {
     // --- Parameters ---
     trajectory_speed_         = declare_parameter("trajectory_speed",          0.40);
+    max_start_distance_m_     = declare_parameter("max_start_distance_m",      3.0);
     control_local_plan_topic_ = declare_parameter("control_local_plan_topic",
                                     std::string("/wiln/control/local_plan"));
     const std::string odom_topic = declare_parameter("odom_topic", std::string("odom_in"));
@@ -46,6 +48,13 @@ WilnReplayNode::WilnReplayNode() : Node("wiln_replay_node")
         "enable_mapping_service",  std::string("/mapping/enable_mapping"));
     const std::string disable_mapping_svc = declare_parameter(
         "disable_mapping_service", std::string("/mapping/disable_mapping"));
+    enable_deformation_ = declare_parameter("enable_deformation", true);
+    reenable_mapping_on_stop_ = declare_parameter("reenable_mapping_on_stop", true);
+    debug_              = declare_parameter("debug",              false);
+    if (!enable_deformation_) {
+        RCLCPP_INFO(get_logger(),
+            "enable_deformation=false: deformer skipped, raw horizon published as control plan.");
+    }
 
     // --- Core components ---
     TrajectoryStreamer::Params stream_params;
@@ -167,8 +176,8 @@ void WilnReplayNode::onArticulationAngle(std_msgs::msg::Float64::SharedPtr msg)
 void WilnReplayNode::handlePlay()
 {
     State expected = State::IDLE;
-    if (!state_.compare_exchange_strong(expected, State::PLAYING)) {
-        RCLCPP_WARN(get_logger(), "Cannot play — already PLAYING.");
+    if (!state_.compare_exchange_strong(expected, State::PREPARING)) {
+        RCLCPP_WARN(get_logger(), "Cannot play — replay is already preparing or playing.");
         return;
     }
 
@@ -179,6 +188,7 @@ void WilnReplayNode::handlePlay()
         if (!traj_received_ || cached_trajectory_.paths.empty()) {
             RCLCPP_WARN(get_logger(), "No trajectory loaded — cannot play.");
             state_.store(State::IDLE);
+            publishState(wiln::msg::WilnState::IDLE, "replay refused: no trajectory");
             return;
         }
         traj = cached_trajectory_;
@@ -193,11 +203,22 @@ void WilnReplayNode::handlePlay()
     if (!pose_ptr) {
         RCLCPP_WARN(get_logger(), "No pose available — cannot determine play direction.");
         state_.store(State::IDLE);
+        publishState(wiln::msg::WilnState::IDLE, "replay refused: no pose");
         return;
     }
 
     double dist_to_start = distanceToPose(*pose_ptr, traj.paths.front().poses.front());
     double dist_to_end   = distanceToPose(*pose_ptr, traj.paths.back().poses.back());
+    const double nearest_endpoint = std::min(dist_to_start, dist_to_end);
+    if (nearest_endpoint > max_start_distance_m_) {
+        RCLCPP_ERROR(get_logger(),
+            "Replay refused: robot is %.2fm from the nearest route endpoint (limit %.2fm).",
+            nearest_endpoint, max_start_distance_m_);
+        state_.store(State::IDLE);
+        publishState(wiln::msg::WilnState::IDLE,
+            "replay refused: robot not at a route endpoint");
+        return;
+    }
     if (dist_to_end < dist_to_start) {
         RCLCPP_INFO(get_logger(), "Closer to end (%.2fm) — reversing trajectory.", dist_to_end);
         traj = reverseTrajectory(traj);
@@ -207,19 +228,38 @@ void WilnReplayNode::handlePlay()
 
     streamer_->setBaseTrajectory(traj);
 
-    // Disable mapping async
-    if (disable_mapping_client_->wait_for_service(std::chrono::milliseconds(0))) {
-        disable_mapping_client_->async_send_request(
-            std::make_shared<std_srvs::srv::Empty::Request>());
+    // Do not authorize replay motion until the mapper has acknowledged that map
+    // insertion is disabled. Registration can take seconds, so fire the request
+    // asynchronously and transition PREPARING -> PLAYING in its response.
+    if (!disable_mapping_client_->wait_for_service(std::chrono::seconds(2))) {
+        RCLCPP_ERROR(get_logger(),
+            "Replay refused: disable_mapping service unavailable; map freeze is not guaranteed.");
+        state_.store(State::IDLE);
+        publishState(wiln::msg::WilnState::IDLE, "replay refused: mapping service unavailable");
+        return;
     }
+    disable_mapping_client_->async_send_request(
+        std::make_shared<std_srvs::srv::Empty::Request>(),
+        [this](rclcpp::Client<std_srvs::srv::Empty>::SharedFuture) {
+            startAfterMappingDisabled();
+        });
+    RCLCPP_INFO(get_logger(), "Replay prepared; waiting for mapper freeze acknowledgement.");
+}
 
-    publishState(wiln::msg::WilnState::PLAYING, "replaying");
-    RCLCPP_INFO(get_logger(), "Replay started at %.2f m/s.", trajectory_speed_);
+void WilnReplayNode::startAfterMappingDisabled()
+{
+    State expected = State::PREPARING;
+    if (!state_.compare_exchange_strong(expected, State::PLAYING)) {
+        return;  // cancelled while the mapper request was pending
+    }
+    publishState(wiln::msg::WilnState::PLAYING, "replaying: mapping frozen");
+    RCLCPP_INFO(get_logger(),
+        "Mapper freeze acknowledged; replay started at %.2f m/s.", trajectory_speed_);
 }
 
 void WilnReplayNode::handleCancel()
 {
-    if (state_.load() != State::PLAYING) return;
+    if (state_.load() == State::IDLE) return;
     stopReplay();
     RCLCPP_INFO(get_logger(), "Replay cancelled.");
 }
@@ -234,8 +274,11 @@ void WilnReplayNode::stopReplay()
         last_valid_plan_.poses.clear();
     }
 
-    // Re-enable mapping async
-    if (enable_mapping_client_->wait_for_service(std::chrono::milliseconds(0))) {
+    // A teach/repeat session should normally keep the taught map immutable even
+    // after completion/abort. The repeat supervisor explicitly re-enables map
+    // insertion at the next teach_start.
+    if (reenable_mapping_on_stop_
+        && enable_mapping_client_->wait_for_service(std::chrono::milliseconds(0))) {
         enable_mapping_client_->async_send_request(
             std::make_shared<std_srvs::srv::Empty::Request>());
     }
@@ -276,27 +319,38 @@ void WilnReplayNode::streamLoop()
         obstacles = latest_obstacles_;
     }
 
-    // Deform (time-budgeted)
-    PathDeformer::Diag deform_diag;
-    auto safe_plan = deformer_->deform(horizon, obstacles, &deform_diag);
-    safe_plan.header.stamp = now();
+    nav_msgs::msg::Path safe_plan;
+    PathDeformer::Diag  deform_diag;
 
-    if (deform_diag.used_fallback) {
-        RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
-            "Deformer fallback (%.1f ms, budget_exceeded=%s)",
-            deform_diag.deform_time_ms,
-            deform_diag.time_budget_exceeded ? "yes" : "no");
-    }
+    if (enable_deformation_) {
+        // Deform (time-budgeted obstacle avoidance)
+        safe_plan = deformer_->deform(horizon, obstacles, &deform_diag);
+        safe_plan.header.stamp = now();
 
-    // Fallback cache
-    bool plan_valid = !deform_diag.used_fallback && safe_plan.poses.size() >= 3;
-    {
-        std::lock_guard<std::mutex> lk(last_valid_plan_mutex_);
-        if (plan_valid) {
-            last_valid_plan_ = safe_plan;
-        } else if (!last_valid_plan_.poses.empty()) {
-            safe_plan = last_valid_plan_;
+        if (deform_diag.used_fallback) {
+            RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
+                "Deformer fallback (%.1f ms, budget_exceeded=%s)",
+                deform_diag.deform_time_ms,
+                deform_diag.time_budget_exceeded ? "yes" : "no");
         }
+
+        // Fallback cache
+        bool plan_valid = !deform_diag.used_fallback && safe_plan.poses.size() >= 3;
+        {
+            std::lock_guard<std::mutex> lk(last_valid_plan_mutex_);
+            if (plan_valid) {
+                last_valid_plan_ = safe_plan;
+            } else if (!last_valid_plan_.poses.empty()) {
+                safe_plan = last_valid_plan_;
+            }
+        }
+    } else {
+        // Deformer disabled — publish raw horizon as control plan (no obstacle deformation).
+        // PathFollower is already configured to follow the global trajectory directly
+        // (local_plan_topic points to a non-existent topic), so this publish is for
+        // completeness / debug visibility only.
+        safe_plan = horizon;
+        safe_plan.header.stamp = now();
     }
 
     // Publish control plan
