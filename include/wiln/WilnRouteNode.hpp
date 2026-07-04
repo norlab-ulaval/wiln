@@ -11,9 +11,9 @@
  *   "save:<filepath>"  -- Save current cached trajectory to file.
  *   "load:<filepath>"  -- Load trajectory from file and publish.
  *
- * External service calls (async, fire-and-forget):
+ * External service calls (async):
  *   /mapping/save_map  -- Request ICP mapper to save the VTK point cloud.
- *   /mapping/load_map  -- Request ICP mapper to load the VTK point cloud.
+ *   /mapping/load_map  -- Load the VTK map before publishing the trajectory.
  */
 
 #include <filesystem>
@@ -76,6 +76,10 @@ private:
 
     // ----- Helpers -----
     void publishTrajectory(const norlab_controllers_msgs::msg::PathSequence& traj);
+    void finishLoadedTrajectory(
+        const norlab_controllers_msgs::msg::PathSequence& traj,
+        size_t pose_count,
+        const std::string& filepath);
     void publishState(uint8_t state_code, const std::string& detail, const std::string& route_name = "");
     bool trajectoryUsable(
         const norlab_controllers_msgs::msg::PathSequence& traj,
