@@ -13,6 +13,7 @@ WilnTeachNode::WilnTeachNode() : Node("wiln_teach_node")
     declare_parameter<double>("min_angle_between_poses", 0.5);
     declare_parameter<double>("max_record_jump_m", 1.0);
     declare_parameter<double>("max_record_yaw_jump_rad", 0.8);
+    declare_parameter<double>("resample_spacing_m", 0.10);
     const std::string odom_topic = declare_parameter("odom_topic", std::string("odom_in"));
     const std::string cmd_vel_topic = declare_parameter("cmd_vel_topic", std::string("cmd_vel_in"));
     const std::string command_topic = declare_parameter("command_topic", std::string("/wiln/command"));
@@ -26,6 +27,7 @@ WilnTeachNode::WilnTeachNode() : Node("wiln_teach_node")
     params.min_angle_between_poses = get_parameter("min_angle_between_poses").as_double();
     params.max_record_jump_m = get_parameter("max_record_jump_m").as_double();
     params.max_record_yaw_jump_rad = get_parameter("max_record_yaw_jump_rad").as_double();
+    params.resample_spacing_m      = get_parameter("resample_spacing_m").as_double();
     recorder_ = std::make_unique<TeachRecorder>(params);
 
     // --- QoS ---
@@ -198,8 +200,17 @@ void WilnTeachNode::publishState(uint8_t state_code, const std::string& detail)
     if (recorder_) {
         const auto traj = recorder_->getTrajectory();
         size_t total = 0;
-        for (const auto& p : traj.paths) total += p.poses.size();
+        double length_m = 0.0;
+        for (const auto& p : traj.paths) {
+            total += p.poses.size();
+            for (size_t i = 1; i < p.poses.size(); ++i) {
+                const auto& a = p.poses[i - 1].pose.position;
+                const auto& b = p.poses[i].pose.position;
+                length_m += std::hypot(b.x - a.x, b.y - a.y);
+            }
+        }
         msg.trajectory_poses = static_cast<uint32_t>(total);
+        msg.trajectory_length_m = length_m;
     }
     state_pub_->publish(msg);
 }
