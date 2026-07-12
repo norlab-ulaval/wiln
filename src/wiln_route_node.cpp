@@ -115,28 +115,54 @@ void WilnRouteNode::handleSave(const std::string& filepath)
     publishState(wiln::msg::WilnState::SAVING, "saving " + filepath);
     RCLCPP_INFO(get_logger(), "Saving trajectory to %s ...", filepath.c_str());
 
-    bool ok = TrajectoryManager::saveLTR(filepath, traj);
+    const bool ok = TrajectoryManager::saveLTR(filepath, traj);
     if (ok) {
         RCLCPP_INFO(get_logger(), "Trajectory saved to %s", filepath.c_str());
     } else {
         RCLCPP_ERROR(get_logger(), "Failed to save trajectory to %s", filepath.c_str());
+        publishState(wiln::msg::WilnState::IDLE, "save failed: trajectory write");
+        return;
     }
 
-    // Async map save (best-effort)
+    // A saved route is a trajectory + the exact teach map. Do not announce
+    // success until the mapper service has returned and the VTK file exists;
+    // otherwise an immediate replay can load a stale or partially-written map.
     const std::string vtk_path = filepath + ".vtk";
+    const std::string route_name = std::filesystem::path(filepath).filename().string();
     if (save_map_client_->wait_for_service(std::chrono::milliseconds(0))) {
         auto req = std::make_shared<SaveMap::Request>();
         req->map_file_name.data = vtk_path;
         save_map_client_->async_send_request(
-            req, [this, vtk_path](rclcpp::Client<SaveMap>::SharedFuture) {
-                RCLCPP_INFO(get_logger(), "Map save requested: %s", vtk_path.c_str());
+            req, [this, vtk_path, route_name](rclcpp::Client<SaveMap>::SharedFuture future) {
+                try {
+                    (void)future.get();
+                } catch (const std::exception& e) {
+                    RCLCPP_ERROR(get_logger(), "Map save failed for %s: %s",
+                        vtk_path.c_str(), e.what());
+                    publishState(wiln::msg::WilnState::IDLE,
+                        "save failed: mapper service error", route_name);
+                    return;
+                }
+                std::error_code ec;
+                const bool map_ready = std::filesystem::exists(vtk_path, ec) &&
+                    !ec && std::filesystem::file_size(vtk_path, ec) > 0 && !ec;
+                if (!map_ready) {
+                    RCLCPP_ERROR(get_logger(),
+                        "Mapper returned but route map is missing or empty: %s",
+                        vtk_path.c_str());
+                    publishState(wiln::msg::WilnState::IDLE,
+                        "save failed: map missing", route_name);
+                    return;
+                }
+                RCLCPP_INFO(get_logger(), "Route map saved completely: %s", vtk_path.c_str());
+                publishState(wiln::msg::WilnState::IDLE, "saved", route_name);
             });
     } else {
-        RCLCPP_WARN(get_logger(), "Mapper save service unavailable — saved trajectory only.");
+        RCLCPP_ERROR(get_logger(),
+            "Mapper save service unavailable — route is incomplete and was not armed as saved.");
+        publishState(wiln::msg::WilnState::IDLE,
+            "save failed: mapper unavailable", route_name);
     }
-
-    const std::string route_name = std::filesystem::path(filepath).filename().string();
-    publishState(wiln::msg::WilnState::IDLE, ok ? "saved" : "save failed", route_name);
 }
 
 // ---------------------------------------------------------------------------
@@ -162,18 +188,11 @@ void WilnRouteNode::handleLoad(const std::string& filepath)
         return;
     }
 
-    // Cache + publish the loaded trajectory
-    {
-        std::lock_guard<std::mutex> lock(traj_mutex_);
-        cached_trajectory_ = traj;
-        traj_received_     = true;
-    }
-    publishTrajectory(traj);
-
-    RCLCPP_INFO(get_logger(), "Trajectory loaded: %zu segment(s), %zu poses.",
-        traj.paths.size(), pose_count);
-
-    // Async map load (best-effort)
+    // The map establishes the coordinate frame used by the saved trajectory.
+    // Do not publish the trajectory (and therefore do not let replay arm) until
+    // the mapper service has returned. Previously the trajectory was published
+    // first, so replay selected its direction from the old map pose while the
+    // mapper was still replacing the map underneath it.
     const std::string vtk_path = filepath + ".vtk";
     if (load_map_client_->wait_for_service(std::chrono::milliseconds(0))
         && std::filesystem::exists(vtk_path))
@@ -182,18 +201,31 @@ void WilnRouteNode::handleLoad(const std::string& filepath)
         req->map_file_name.data = vtk_path;
         if (!traj.paths.empty() && !traj.paths.front().poses.empty())
             req->pose = traj.paths.front().poses.front().pose;
+        RCLCPP_INFO(get_logger(), "Map load started: %s", vtk_path.c_str());
         load_map_client_->async_send_request(
-            req, [this, vtk_path](rclcpp::Client<LoadMap>::SharedFuture) {
-                RCLCPP_INFO(get_logger(), "Map load requested: %s", vtk_path.c_str());
+            req,
+            [this, traj, pose_count, filepath, vtk_path](
+                rclcpp::Client<LoadMap>::SharedFuture future) {
+                try {
+                    (void)future.get();
+                } catch (const std::exception& e) {
+                    RCLCPP_ERROR(get_logger(), "Map load failed for %s: %s",
+                        vtk_path.c_str(), e.what());
+                    publishState(wiln::msg::WilnState::IDLE,
+                        "load failed: mapper service error");
+                    return;
+                }
+                RCLCPP_INFO(get_logger(), "Map load completed: %s", vtk_path.c_str());
+                finishLoadedTrajectory(traj, pose_count, filepath);
             });
+        return;
     } else if (!std::filesystem::exists(vtk_path)) {
         RCLCPP_WARN(get_logger(), "No VTK map at %s — loaded trajectory only.", vtk_path.c_str());
     } else {
         RCLCPP_WARN(get_logger(), "Mapper load service unavailable — loaded trajectory only.");
     }
 
-    const std::string route_name = std::filesystem::path(filepath).filename().string();
-    publishState(wiln::msg::WilnState::IDLE, "loaded", route_name);
+    finishLoadedTrajectory(traj, pose_count, filepath);
 }
 
 // ---------------------------------------------------------------------------
@@ -211,6 +243,23 @@ void WilnRouteNode::publishTrajectory(
         for (const auto& ps : path.poses)
             global.poses.push_back(ps);
     global_plan_pub_->publish(global);
+}
+
+void WilnRouteNode::finishLoadedTrajectory(
+    const norlab_controllers_msgs::msg::PathSequence& traj,
+    size_t pose_count,
+    const std::string& filepath)
+{
+    {
+        std::lock_guard<std::mutex> lock(traj_mutex_);
+        cached_trajectory_ = traj;
+        traj_received_     = true;
+    }
+    publishTrajectory(traj);
+    RCLCPP_INFO(get_logger(), "Trajectory loaded after map: %zu segment(s), %zu poses.",
+        traj.paths.size(), pose_count);
+    const std::string route_name = std::filesystem::path(filepath).filename().string();
+    publishState(wiln::msg::WilnState::IDLE, "loaded", route_name);
 }
 
 void WilnRouteNode::publishState(uint8_t state_code, const std::string& detail,
@@ -233,6 +282,7 @@ bool WilnRouteNode::trajectoryUsable(
     size_t non_empty_segments = 0;
     double z_min = std::numeric_limits<double>::infinity();
     double z_max = -std::numeric_limits<double>::infinity();
+    const geometry_msgs::msg::PoseStamped* previous_route_pose = nullptr;
 
     for (const auto& path : traj.paths) {
         if (!path.poses.empty()) {
@@ -242,16 +292,21 @@ bool WilnRouteNode::trajectoryUsable(
         for (const auto& pose : path.poses) {
             z_min = std::min(z_min, pose.pose.position.z);
             z_max = std::max(z_max, pose.pose.position.z);
-        }
-        for (size_t i = 1; i < path.poses.size(); ++i) {
-            const auto& previous = path.poses[i - 1];
-            const auto& current = path.poses[i];
-            const double dx = current.pose.position.x - previous.pose.position.x;
-            const double dy = current.pose.position.y - previous.pose.position.y;
-            const double dz = current.pose.position.z - previous.pose.position.z;
+            if (previous_route_pose == nullptr) {
+                previous_route_pose = &pose;
+                continue;
+            }
+            // Validate across segment boundaries as well as within a segment.
+            // ICP gap recovery represents a discontinuity as a new segment; if
+            // boundaries are skipped here, a multi-metre teleport can be saved
+            // as a seemingly valid teach route.
+            const auto& previous = *previous_route_pose;
+            const double dx = pose.pose.position.x - previous.pose.position.x;
+            const double dy = pose.pose.position.y - previous.pose.position.y;
+            const double dz = pose.pose.position.z - previous.pose.position.z;
             const double step = std::sqrt(dx * dx + dy * dy + dz * dz);
             const double yaw_step = std::abs(wrapToPi(
-                yawFromQuaternion(current.pose.orientation) -
+                yawFromQuaternion(pose.pose.orientation) -
                 yawFromQuaternion(previous.pose.orientation)));
             if (step > max_route_step_m_) {
                 if (reason) {
@@ -265,6 +320,7 @@ bool WilnRouteNode::trajectoryUsable(
                 }
                 return false;
             }
+            previous_route_pose = &pose;
         }
     }
     if (pose_count) {
