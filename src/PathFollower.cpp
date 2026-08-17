@@ -16,7 +16,7 @@ PathFollower::PathFollower() : Node("wiln_path_follower")
 {
     // ----- Parameters -----
     // Topics
-    declare_parameter("cmd_vel_topic",      std::string("controller/cmd_vel"));
+    declare_parameter("cmd_vel_topic",      std::string("/mtt_control/auto/wiln/cmd_vel"));
     declare_parameter("odom_topic",         std::string("/mapping/icp_measurement"));
     declare_parameter("local_plan_topic",   std::string("/wiln/control/local_plan"));
     declare_parameter("trajectory_topic",   std::string("/wiln/trajectory"));
@@ -53,6 +53,11 @@ PathFollower::PathFollower() : Node("wiln_path_follower")
     max_target_distance_m_  = declare_parameter("max_target_distance_m",    4.0);
     tracking_error_grace_s_ = declare_parameter("tracking_error_grace_s",   1.0);
     obstacle_gate_timeout_s_= declare_parameter("obstacle_gate_timeout_s",   0.5);
+    deformation_safe_timeout_s_ = declare_parameter("deformation_safe_timeout_s", 0.5);
+    hard_stop_distance_m_ = declare_parameter("hard_stop_distance_m", 1.0);
+    bypass_max_speed_ms_ = declare_parameter("bypass_max_speed_ms", 0.25);
+    min_deformed_clearance_m_ = declare_parameter("min_deformed_clearance_m", 1.5);
+    allow_safe_deformed_bypass_ = declare_parameter("allow_safe_deformed_bypass", true);
     join_max_lateral_error_m_ = declare_parameter("join_max_lateral_error_m", 3.0);
     join_max_heading_error_rad_ = declare_parameter("join_max_heading_error_rad", 1.20);
     join_capture_lateral_m_ = declare_parameter("join_capture_lateral_m", 0.35);
@@ -104,10 +109,24 @@ PathFollower::PathFollower() : Node("wiln_path_follower")
     const std::string state_topic = get_parameter("state_topic").as_string();
     const std::string obstacle_stop_topic = get_parameter("obstacle_stop_topic").as_string();
     const std::string obstacle_slowdown_topic = get_parameter("obstacle_slowdown_topic").as_string();
+    const std::string deformation_safe_topic = declare_parameter(
+        "deformation_safe_topic", std::string("/wiln/replay/deformation_safe"));
+    const std::string front_clearance_topic = declare_parameter(
+        "front_clearance_topic", std::string("/mtt_obstacle/front_clearance_m"));
+    const std::string deformation_clearance_topic = declare_parameter(
+        "deformation_clearance_topic",
+        std::string("/wiln/replay/deformation_clearance_m"));
     const std::string articulation_feedback_topic = declare_parameter(
         "articulation_feedback_topic", std::string("/hardware/articulation_angle"));
     const std::string articulation_setpoint_topic = declare_parameter(
-        "articulation_setpoint_topic", std::string("/mtt_articulation_setpoint"));
+        "articulation_setpoint_topic",
+        std::string("/mtt_control/auto/wiln/articulation_setpoint"));
+    const std::string autonomy_request_topic = declare_parameter(
+        "autonomy_request_topic", std::string("/mtt_control/autonomy/request"));
+    const std::string autonomy_release_topic = declare_parameter(
+        "autonomy_release_topic", std::string("/mtt_control/autonomy/release"));
+    const std::string autonomy_selected_topic = declare_parameter(
+        "autonomy_selected_topic", std::string("/mtt_control/autonomy/selected"));
     const std::string speed_setpoint_topic = declare_parameter(
         "speed_setpoint_topic", std::string("/speed_setpoint"));
     const double control_rate_hz       = get_parameter("control_rate_hz").as_double();
@@ -176,13 +195,33 @@ PathFollower::PathFollower() : Node("wiln_path_follower")
         obstacle_slowdown_topic, rel_qos,
         [this](std_msgs::msg::Float32::SharedPtr m) { onObstacleSlowdown(m); });
 
+    deformation_safe_sub_ = create_subscription<std_msgs::msg::Bool>(
+        deformation_safe_topic, rel_qos,
+        [this](std_msgs::msg::Bool::SharedPtr m) { onDeformationSafe(m); });
+
+    front_clearance_sub_ = create_subscription<std_msgs::msg::Float32>(
+        front_clearance_topic, rel_qos,
+        [this](std_msgs::msg::Float32::SharedPtr m) { onFrontClearance(m); });
+
+    deformation_clearance_sub_ = create_subscription<std_msgs::msg::Float32>(
+        deformation_clearance_topic, rel_qos,
+        [this](std_msgs::msg::Float32::SharedPtr m) { onDeformationClearance(m); });
+
     articulation_feedback_sub_ = create_subscription<std_msgs::msg::Float64>(
         articulation_feedback_topic, be_qos,
         [this](std_msgs::msg::Float64::SharedPtr m) { onArticulationFeedback(m); });
 
+    autonomy_selected_sub_ = create_subscription<std_msgs::msg::String>(
+        autonomy_selected_topic, rclcpp::QoS(1).reliable().transient_local(),
+        [this](std_msgs::msg::String::SharedPtr m) { onAutonomySelected(m); });
+
     // ----- Publishers -----
     cmd_pub_         = create_publisher<geometry_msgs::msg::TwistStamped>(cmd_vel_topic, rel_qos);
     wiln_command_pub_= create_publisher<std_msgs::msg::String>(command_topic, rel_qos);
+    autonomy_request_pub_ = create_publisher<std_msgs::msg::String>(
+        autonomy_request_topic, rel_qos);
+    autonomy_release_pub_ = create_publisher<std_msgs::msg::String>(
+        autonomy_release_topic, rel_qos);
     target_pose_pub_ = create_publisher<geometry_msgs::msg::PoseStamped>("~/target_pose", be_qos);
     follower_state_pub_ = create_publisher<wiln::msg::WilnState>(state_topic, transient_qos);
 
@@ -332,6 +371,7 @@ void PathFollower::onReplayState(wiln::msg::WilnState::SharedPtr msg)
             following_ = false;
             startArticulationRecenter();
             publishZero();
+            if (!recenter_active_) releaseAutonomy();
             publishFollowerState(wiln::msg::WilnState::IDLE, "replay completed");
         }
     }
@@ -353,6 +393,30 @@ void PathFollower::onObstacleSlowdown(std_msgs::msg::Float32::SharedPtr msg)
     obstacle_slowdown_received_ = true;
 }
 
+void PathFollower::onDeformationSafe(std_msgs::msg::Bool::SharedPtr msg)
+{
+    std::lock_guard<std::mutex> lk(obstacle_mutex_);
+    deformation_safe_ = msg->data;
+    deformation_safe_stamp_ = now();
+    deformation_safe_received_ = true;
+}
+
+void PathFollower::onFrontClearance(std_msgs::msg::Float32::SharedPtr msg)
+{
+    std::lock_guard<std::mutex> lk(obstacle_mutex_);
+    front_clearance_m_ = static_cast<double>(msg->data);
+    front_clearance_stamp_ = now();
+    front_clearance_received_ = true;
+}
+
+void PathFollower::onDeformationClearance(std_msgs::msg::Float32::SharedPtr msg)
+{
+    std::lock_guard<std::mutex> lk(obstacle_mutex_);
+    deformation_clearance_m_ = static_cast<double>(msg->data);
+    deformation_clearance_stamp_ = now();
+    deformation_clearance_received_ = true;
+}
+
 void PathFollower::onArticulationFeedback(std_msgs::msg::Float64::SharedPtr msg)
 {
     if (!std::isfinite(msg->data)) {
@@ -364,6 +428,22 @@ void PathFollower::onArticulationFeedback(std_msgs::msg::Float64::SharedPtr msg)
     articulation_feedback_received_ = true;
 }
 
+void PathFollower::onAutonomySelected(std_msgs::msg::String::SharedPtr msg)
+{
+    if (msg->data == "wiln" || msg->data == "WILN") return;
+
+    std::lock_guard<std::mutex> lk(follow_mutex_);
+    if (!following_ && !recenter_active_ && !autonomy_claimed_) return;
+
+    following_ = false;
+    recenter_active_ = false;
+    autonomy_claimed_ = false;
+    publishZero();
+    publishFollowerState(
+        wiln::msg::WilnState::IDLE, "yielded command ownership to " + msg->data);
+    requestReplayCancel();
+}
+
 // ---------------------------------------------------------------------------
 // Command handlers
 // ---------------------------------------------------------------------------
@@ -371,9 +451,9 @@ void PathFollower::handlePlay()
 {
     {
         std::lock_guard<std::mutex> lk(follow_mutex_);
-        if (following_ || replay_node_playing_) {
+        if (following_) {
             RCLCPP_WARN(get_logger(),
-                "Ignoring duplicate play command while replay is already armed or active.");
+                "Ignoring duplicate play command while the follower is already active.");
             return;
         }
     }
@@ -473,6 +553,7 @@ void PathFollower::handlePlay()
     kappa_adaptive_bias_  = 0.0;
     joining_path_         = true;
     join_started_at_      = now();
+    requestAutonomy();
 
     progress_index_ = findStartIndex(active_segments_[0].poses, odom.pose.pose);
     const auto initial_progress = selectPathProgress(
@@ -502,9 +583,11 @@ void PathFollower::handlePlay()
 void PathFollower::handleCancel()
 {
     std::lock_guard<std::mutex> lk(follow_mutex_);
-    startArticulationRecenter();
+    const bool was_active = following_ || recenter_active_ || autonomy_claimed_;
+    if (was_active) startArticulationRecenter();
     following_ = false;
     publishZero();
+    if (!recenter_active_) releaseAutonomy();
     publishFollowerState(wiln::msg::WilnState::IDLE, "cancelled");
     RCLCPP_INFO(get_logger(), "Path following cancelled.");
 }
@@ -515,6 +598,7 @@ void PathFollower::stopFollowing()
     following_ = false;
     startArticulationRecenter();
     publishZero();
+    if (!recenter_active_) releaseAutonomy();
     publishFollowerState(wiln::msg::WilnState::IDLE, "trajectory completed");
     // Keep WilnReplayNode and this follower in the same state. Without this,
     // a follower path-loss left replay_node PLAYING, and a later play command
@@ -543,11 +627,13 @@ void PathFollower::controlLoop()
                 }
                 if (centered) {
                     recenter_active_ = false;
+                    releaseAutonomy();
                     RCLCPP_INFO(get_logger(),
                         "Physical articulation reached center after replay stop.");
                 }
             } else {
                 recenter_active_ = false;
+                releaseAutonomy();
                 RCLCPP_WARN(get_logger(),
                     "Articulation recenter timeout after %.1fs; center command stopped.",
                     articulation_recenter_s_);
@@ -568,6 +654,7 @@ void PathFollower::controlLoop()
 
     bool obstacle_stop = false;
     double obstacle_slowdown = 1.0;
+    bool bypass_authorized = false;
     {
         std::lock_guard<std::mutex> ok(obstacle_mutex_);
         if (obstacle_stop_received_ && (now() - obstacle_stop_stamp_).seconds() <= obstacle_gate_timeout_s_) {
@@ -576,8 +663,20 @@ void PathFollower::controlLoop()
         if (obstacle_slowdown_received_ && (now() - obstacle_slowdown_stamp_).seconds() <= obstacle_gate_timeout_s_) {
             obstacle_slowdown = obstacle_slowdown_scale_;
         }
+        const bool deformation_fresh = deformation_safe_received_ &&
+            (now() - deformation_safe_stamp_).seconds() <= deformation_safe_timeout_s_;
+        const bool clearance_fresh = front_clearance_received_ &&
+            (now() - front_clearance_stamp_).seconds() <= obstacle_gate_timeout_s_;
+        const bool deformation_clearance_fresh = deformation_clearance_received_ &&
+            (now() - deformation_clearance_stamp_).seconds() <=
+            deformation_safe_timeout_s_;
+        bypass_authorized = allow_safe_deformed_bypass_ && obstacle_stop &&
+            deformation_fresh && deformation_safe_ && clearance_fresh &&
+            deformation_clearance_fresh &&
+            deformation_clearance_m_ >= min_deformed_clearance_m_ &&
+            front_clearance_m_ > hard_stop_distance_m_;
     }
-    if (obstacle_stop || obstacle_slowdown <= 0.01) {
+    if ((obstacle_stop || obstacle_slowdown <= 0.01) && !bypass_authorized) {
         publishZero();
         if (!obstacle_hold_state_published_) {
             publishFollowerState(wiln::msg::WilnState::PLAYING, "paused: front obstacle");
@@ -586,6 +685,12 @@ void PathFollower::controlLoop()
         RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
             "Front obstacle stop active — holding zero cmd_vel and keeping replay alive.");
         return;
+    }
+    if (bypass_authorized) {
+        obstacle_slowdown = 1.0;
+        RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 1000,
+            "Validated deformed bypass active — proceeding at <= %.2f m/s; hard stop at %.2f m.",
+            bypass_max_speed_ms_, hard_stop_distance_m_);
     }
     if (obstacle_hold_state_published_) {
         publishFollowerState(wiln::msg::WilnState::PLAYING, "following");
@@ -856,6 +961,9 @@ void PathFollower::controlLoop()
 
     prev_psi_cmd_ = ctrl.psi_cmd;
     ctrl.linear_x *= obstacle_slowdown;
+    if (bypass_authorized && std::abs(ctrl.linear_x) > bypass_max_speed_ms_) {
+        ctrl.linear_x = std::copysign(bypass_max_speed_ms_, ctrl.linear_x);
+    }
     publishCommand(ctrl.linear_x, ctrl.steering_normalized, ctrl.psi_cmd);
 
     publishDebug(errs.lateral_m, errs.heading_rad, errs.distance_m,
@@ -1057,6 +1165,24 @@ void PathFollower::requestReplayCancel()
     std_msgs::msg::String cancel;
     cancel.data = "cancel";
     wiln_command_pub_->publish(cancel);
+}
+
+void PathFollower::requestAutonomy()
+{
+    if (!autonomy_request_pub_) return;
+    std_msgs::msg::String request;
+    request.data = "wiln";
+    autonomy_request_pub_->publish(request);
+    autonomy_claimed_ = true;
+}
+
+void PathFollower::releaseAutonomy()
+{
+    if (!autonomy_claimed_ || !autonomy_release_pub_) return;
+    std_msgs::msg::String release;
+    release.data = "wiln";
+    autonomy_release_pub_->publish(release);
+    autonomy_claimed_ = false;
 }
 
 void PathFollower::publishCommand(double linear_x, double steer_norm, double psi_cmd)

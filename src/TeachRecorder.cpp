@@ -9,7 +9,7 @@ TeachRecorder::TeachRecorder(const Params& params) : params_(params) {}
 
 void TeachRecorder::start() {
     std::lock_guard<std::mutex> lock(data_mutex_);
-    trajectory_.paths.clear();
+    trajectory_ = norlab_controllers_msgs::msg::PathSequence{};
     rejected_jumps_ = 0;
     gap_recovery_count_ = 0;
     recording_ = true;
@@ -21,7 +21,9 @@ void TeachRecorder::stop() {
 
 void TeachRecorder::clear() {
     std::lock_guard<std::mutex> lock(data_mutex_);
-    trajectory_.paths.clear();
+    trajectory_ = norlab_controllers_msgs::msg::PathSequence{};
+    rejected_jumps_ = 0;
+    gap_recovery_count_ = 0;
 }
 
 void TeachRecorder::addPose(const geometry_msgs::msg::PoseStamped& pose, bool forward) {

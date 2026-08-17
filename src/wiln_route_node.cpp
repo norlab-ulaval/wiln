@@ -1,6 +1,7 @@
 #include "wiln/WilnRouteNode.hpp"
 
 #include <cmath>
+#include <exception>
 #include <limits>
 
 namespace wiln {
@@ -19,7 +20,8 @@ WilnRouteNode::WilnRouteNode() : Node("wiln_route_node")
     max_route_z_span_m_ = declare_parameter("max_route_z_span_m", 2.0);
     const std::string command_topic = declare_parameter("command_topic", std::string("/wiln/command"));
     const std::string trajectory_topic = declare_parameter("trajectory_topic", std::string("/wiln/trajectory"));
-    const std::string global_plan_topic = declare_parameter("global_plan_topic", std::string("/wiln/global_plan"));
+    const std::string loaded_trajectory_topic = declare_parameter(
+        "loaded_trajectory_topic", std::string("/wiln/trajectory/loaded"));
     const std::string state_topic = declare_parameter("state_topic", std::string("/wiln/route/state"));
 
     // --- QoS ---
@@ -36,10 +38,9 @@ WilnRouteNode::WilnRouteNode() : Node("wiln_route_node")
         [this](norlab_controllers_msgs::msg::PathSequence::SharedPtr msg) { onTrajectory(msg); });
 
     // --- Publishers ---
-    trajectory_pub_  = create_publisher<norlab_controllers_msgs::msg::PathSequence>(
-        trajectory_topic, transient_qos);
-    global_plan_pub_ = create_publisher<nav_msgs::msg::Path>(
-        global_plan_topic, transient_qos);
+    loaded_trajectory_pub_ =
+        create_publisher<norlab_controllers_msgs::msg::PathSequence>(
+        loaded_trajectory_topic, transient_qos);
     state_pub_       = create_publisher<wiln::msg::WilnState>(
         state_topic, transient_qos);
 
@@ -58,9 +59,24 @@ WilnRouteNode::WilnRouteNode() : Node("wiln_route_node")
 void WilnRouteNode::onTrajectory(
     norlab_controllers_msgs::msg::PathSequence::SharedPtr msg)
 {
-    std::lock_guard<std::mutex> lock(traj_mutex_);
-    cached_trajectory_ = *msg;
-    traj_received_     = true;
+    std::optional<std::pair<std::string, size_t>> ready_save;
+    {
+        std::lock_guard<std::mutex> lock(traj_mutex_);
+        cached_trajectory_ = *msg;
+        traj_received_     = true;
+
+        size_t pose_count = 0;
+        for (const auto& path : msg->paths) pose_count += path.poses.size();
+        if (pending_counted_save_ && pending_counted_save_->second == pose_count) {
+            ready_save = pending_counted_save_;
+            pending_counted_save_.reset();
+        }
+    }
+
+    // A save command and the canonical trajectory are different DDS streams.
+    // Complete an auto-save only after this node has received the exact Teach
+    // result named by the command; otherwise it could persist its previous cache.
+    if (ready_save) handleSave(ready_save->first, ready_save->second);
 }
 
 // ---------------------------------------------------------------------------
@@ -70,7 +86,22 @@ void WilnRouteNode::onCommand(std_msgs::msg::String::SharedPtr msg)
 {
     const std::string& cmd = msg->data;
     if (cmd.rfind("save:", 0) == 0) {
-        handleSave(cmd.substr(5));
+        std::string filepath = cmd.substr(5);
+        std::optional<size_t> expected_poses;
+        constexpr const char* count_tag = ";poses=";
+        const size_t count_pos = filepath.rfind(count_tag);
+        if (count_pos != std::string::npos) {
+            try {
+                expected_poses = static_cast<size_t>(
+                    std::stoull(filepath.substr(count_pos + std::char_traits<char>::length(count_tag))));
+                filepath.resize(count_pos);
+            } catch (const std::exception&) {
+                RCLCPP_ERROR(get_logger(), "save: invalid expected pose count in '%s'.", cmd.c_str());
+                publishState(wiln::msg::WilnState::IDLE, "save failed: invalid pose count");
+                return;
+            }
+        }
+        handleSave(filepath, expected_poses);
     } else if (cmd.rfind("load:", 0) == 0) {
         handleLoad(cmd.substr(5));
     }
@@ -79,7 +110,8 @@ void WilnRouteNode::onCommand(std_msgs::msg::String::SharedPtr msg)
 // ---------------------------------------------------------------------------
 // Save handler
 // ---------------------------------------------------------------------------
-void WilnRouteNode::handleSave(const std::string& filepath)
+void WilnRouteNode::handleSave(
+    const std::string& filepath, std::optional<size_t> expected_poses)
 {
     if (filepath.empty()) {
         RCLCPP_ERROR(get_logger(), "save: empty filepath.");
@@ -92,6 +124,19 @@ void WilnRouteNode::handleSave(const std::string& filepath)
         std::lock_guard<std::mutex> lock(traj_mutex_);
         size_t pose_count = 0;
         std::string reason;
+        if (expected_poses) {
+            for (const auto& path : cached_trajectory_.paths) {
+                pose_count += path.poses.size();
+            }
+            if (!traj_received_ || pose_count != *expected_poses) {
+                pending_counted_save_ = std::make_pair(filepath, *expected_poses);
+                RCLCPP_INFO(get_logger(),
+                    "save: waiting for canonical Teach trajectory (%zu poses; cache has %zu).",
+                    *expected_poses, traj_received_ ? pose_count : 0U);
+                return;
+            }
+        }
+        pose_count = 0;
         if (!traj_received_ || !trajectoryUsable(cached_trajectory_, &pose_count, &reason)) {
             RCLCPP_WARN(get_logger(), "save: no usable trajectory available: %s", reason.c_str());
             publishState(wiln::msg::WilnState::IDLE, "save failed: " + reason);
@@ -234,15 +279,9 @@ void WilnRouteNode::handleLoad(const std::string& filepath)
 void WilnRouteNode::publishTrajectory(
     const norlab_controllers_msgs::msg::PathSequence& traj)
 {
-    trajectory_pub_->publish(traj);
-
-    nav_msgs::msg::Path global;
-    global.header = traj.header;
-    global.header.stamp = now();
-    for (const auto& path : traj.paths)
-        for (const auto& ps : path.poses)
-            global.poses.push_back(ps);
-    global_plan_pub_->publish(global);
+    auto loaded = traj;
+    loaded.header.stamp = now();
+    loaded_trajectory_pub_->publish(loaded);
 }
 
 void WilnRouteNode::finishLoadedTrajectory(

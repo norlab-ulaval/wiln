@@ -5,10 +5,13 @@
  * Responsibilities:
  *   - Save a trajectory to .ltr file (+ request VTK map save from ICP mapper).
  *   - Load a .ltr file and publish the trajectory (+ request VTK map load).
- *   - Publish the loaded/saved trajectory on /wiln/trajectory.
+ *   - Publish loaded trajectories on /wiln/trajectory/loaded. WilnTeachNode
+ *     is the single authority that republishes complete replacements on
+ *     /wiln/trajectory.
  *
  * Commands consumed from /wiln/command:
  *   "save:<filepath>"  -- Save current cached trajectory to file.
+ *   "save:<filepath>;poses=N" -- Save after the canonical cache contains N poses.
  *   "load:<filepath>"  -- Load trajectory from file and publish.
  *
  * External service calls (async):
@@ -19,7 +22,9 @@
 #include <filesystem>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
+#include <utility>
 
 #include <rclcpp/rclcpp.hpp>
 #include <nav_msgs/msg/path.hpp>
@@ -45,13 +50,14 @@ private:
     norlab_controllers_msgs::msg::PathSequence cached_trajectory_;
     std::mutex                                  traj_mutex_;
     bool                                        traj_received_{false};
+    std::optional<std::pair<std::string, size_t>> pending_counted_save_;
 
     // ----- ROS interfaces -----
     rclcpp::Subscription<std_msgs::msg::String>::SharedPtr                    command_sub_;
     rclcpp::Subscription<norlab_controllers_msgs::msg::PathSequence>::SharedPtr traj_sub_;
 
-    rclcpp::Publisher<norlab_controllers_msgs::msg::PathSequence>::SharedPtr trajectory_pub_;
-    rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr                        global_plan_pub_;
+    rclcpp::Publisher<norlab_controllers_msgs::msg::PathSequence>::SharedPtr
+      loaded_trajectory_pub_;
     rclcpp::Publisher<wiln::msg::WilnState>::SharedPtr                       state_pub_;
 
     // ----- Mapper service clients (async, non-blocking) -----
@@ -71,7 +77,7 @@ private:
     void onTrajectory(norlab_controllers_msgs::msg::PathSequence::SharedPtr msg);
 
     // ----- Handlers -----
-    void handleSave(const std::string& filepath);
+    void handleSave(const std::string& filepath, std::optional<size_t> expected_poses = std::nullopt);
     void handleLoad(const std::string& filepath);
 
     // ----- Helpers -----

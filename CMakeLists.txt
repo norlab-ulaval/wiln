@@ -136,6 +136,50 @@ if(BUILD_TESTING)
         target_include_directories(test_path_progress PUBLIC ${WILN_INCLUDE_DIRS})
         ament_target_dependencies(test_path_progress geometry_msgs)
     endif()
+    ament_add_gtest(
+        test_path_deformer
+        test/test_path_deformer.cpp
+        src/PathDeformer.cpp
+    )
+    if(TARGET test_path_deformer)
+        target_include_directories(test_path_deformer PUBLIC ${WILN_INCLUDE_DIRS})
+        ament_target_dependencies(
+            test_path_deformer
+            geometry_msgs
+            nav_msgs
+            tf2
+            tf2_geometry_msgs
+        )
+    endif()
+    ament_add_gtest(
+        test_trajectory_streamer
+        test/test_trajectory_streamer.cpp
+        src/TrajectoryStreamer.cpp
+    )
+    if(TARGET test_trajectory_streamer)
+        target_include_directories(test_trajectory_streamer PUBLIC ${WILN_INCLUDE_DIRS})
+        ament_target_dependencies(
+            test_trajectory_streamer
+            geometry_msgs
+            nav_msgs
+            norlab_controllers_msgs
+        )
+    endif()
+    ament_add_gtest(
+        test_teach_recorder_session
+        test/test_teach_recorder_session.cpp
+        src/TeachRecorder.cpp
+    )
+    if(TARGET test_teach_recorder_session)
+        target_include_directories(test_teach_recorder_session PUBLIC ${WILN_INCLUDE_DIRS})
+        ament_target_dependencies(
+            test_teach_recorder_session
+            geometry_msgs
+            norlab_controllers_msgs
+            tf2
+            tf2_geometry_msgs
+        )
+    endif()
 endif()
 
 ament_export_dependencies(rosidl_default_runtime)

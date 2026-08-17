@@ -72,6 +72,11 @@ private:
     double max_target_distance_m_  {4.0};
     double tracking_error_grace_s_ {1.0};
     double obstacle_gate_timeout_s_ {0.5};
+    double deformation_safe_timeout_s_ {0.5};
+    double hard_stop_distance_m_ {1.0};
+    double bypass_max_speed_ms_ {0.25};
+    double min_deformed_clearance_m_ {1.5};
+    bool allow_safe_deformed_bypass_ {true};
     double join_max_lateral_error_m_ {3.0};
     double join_max_heading_error_rad_ {1.20};
     double join_capture_lateral_m_ {0.35};
@@ -129,6 +134,7 @@ private:
     bool   path_lost_tracking_     {false};
     bool   replay_node_playing_    {false};
     bool   recenter_active_        {false};
+    bool   autonomy_claimed_       {false};
     std::chrono::steady_clock::time_point recenter_until_{};
     bool   joining_path_           {false};
     rclcpp::Time join_started_at_;
@@ -173,6 +179,15 @@ private:
     bool obstacle_stop_received_{false};
     bool obstacle_slowdown_received_{false};
     bool obstacle_hold_state_published_{false};
+    bool deformation_safe_{false};
+    double front_clearance_m_{-1.0};
+    double deformation_clearance_m_{-1.0};
+    rclcpp::Time deformation_safe_stamp_{0, 0, RCL_CLOCK_UNINITIALIZED};
+    rclcpp::Time front_clearance_stamp_{0, 0, RCL_CLOCK_UNINITIALIZED};
+    rclcpp::Time deformation_clearance_stamp_{0, 0, RCL_CLOCK_UNINITIALIZED};
+    bool deformation_safe_received_{false};
+    bool front_clearance_received_{false};
+    bool deformation_clearance_received_{false};
     std::mutex obstacle_mutex_;
 
     // ----- Callback group -----
@@ -188,7 +203,11 @@ private:
     rclcpp::Subscription<wiln::msg::WilnState>::SharedPtr            replay_state_sub_;
     rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr             obstacle_stop_sub_;
     rclcpp::Subscription<std_msgs::msg::Float32>::SharedPtr          obstacle_slowdown_sub_;
+    rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr             deformation_safe_sub_;
+    rclcpp::Subscription<std_msgs::msg::Float32>::SharedPtr          front_clearance_sub_;
+    rclcpp::Subscription<std_msgs::msg::Float32>::SharedPtr          deformation_clearance_sub_;
     rclcpp::Subscription<std_msgs::msg::Float64>::SharedPtr          articulation_feedback_sub_;
+    rclcpp::Subscription<std_msgs::msg::String>::SharedPtr           autonomy_selected_sub_;
 
     // ----- Publishers -----
     rclcpp::Publisher<geometry_msgs::msg::TwistStamped>::SharedPtr cmd_pub_;
@@ -211,6 +230,8 @@ private:
     // MTT servo (optional)
     rclcpp::Publisher<std_msgs::msg::Float64>::SharedPtr articulation_pub_;
     rclcpp::Publisher<std_msgs::msg::Float64>::SharedPtr speed_setpoint_pub_;
+    rclcpp::Publisher<std_msgs::msg::String>::SharedPtr autonomy_request_pub_;
+    rclcpp::Publisher<std_msgs::msg::String>::SharedPtr autonomy_release_pub_;
 
     // ----- 20 Hz control timer -----
     rclcpp::TimerBase::SharedPtr control_timer_;
@@ -225,7 +246,11 @@ private:
     void onReplayState(wiln::msg::WilnState::SharedPtr msg);
     void onObstacleStop(std_msgs::msg::Bool::SharedPtr msg);
     void onObstacleSlowdown(std_msgs::msg::Float32::SharedPtr msg);
+    void onDeformationSafe(std_msgs::msg::Bool::SharedPtr msg);
+    void onFrontClearance(std_msgs::msg::Float32::SharedPtr msg);
+    void onDeformationClearance(std_msgs::msg::Float32::SharedPtr msg);
     void onArticulationFeedback(std_msgs::msg::Float64::SharedPtr msg);
+    void onAutonomySelected(std_msgs::msg::String::SharedPtr msg);
 
     // ----- Control loop -----
     void controlLoop();
@@ -299,6 +324,8 @@ private:
     void publishZero();
     void startArticulationRecenter();
     void requestReplayCancel();
+    void requestAutonomy();
+    void releaseAutonomy();
     void publishCommand(double linear_x, double steering_normalized, double psi_cmd);
     void publishDebug(double lat, double hdg, double dist,
                       double kd, double kff, double kb,

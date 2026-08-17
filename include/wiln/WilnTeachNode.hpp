@@ -5,7 +5,10 @@
  * Responsibilities:
  *   - Record robot poses during the teach phase.
  *   - Apply SE(3) Frechet mean smoothing when recording stops.
- *   - Publish the trajectory on /wiln/trajectory (transient_local).
+ *   - Be the single authority publishing /wiln/trajectory and
+ *     /wiln/global_plan (transient_local).
+ *   - Accept complete replacements from route loading and relocalization on
+ *     dedicated source topics. Source trajectories are never concatenated.
  *
  * Commands consumed from /wiln/command:
  *   "start_recording"   -- Begin pose recording (IDLE -> RECORDING).
@@ -47,6 +50,10 @@ private:
     rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr       odom_sub_;
     rclcpp::Subscription<geometry_msgs::msg::TwistStamped>::SharedPtr cmd_vel_sub_;
     rclcpp::Subscription<std_msgs::msg::String>::SharedPtr         command_sub_;
+    rclcpp::Subscription<norlab_controllers_msgs::msg::PathSequence>::SharedPtr
+      loaded_trajectory_sub_;
+    rclcpp::Subscription<norlab_controllers_msgs::msg::PathSequence>::SharedPtr
+      corrected_trajectory_sub_;
 
     rclcpp::Publisher<norlab_controllers_msgs::msg::PathSequence>::SharedPtr trajectory_pub_;
     rclcpp::Publisher<nav_msgs::msg::Path>::SharedPtr                        global_plan_pub_;
@@ -56,6 +63,9 @@ private:
     void onOdom(nav_msgs::msg::Odometry::SharedPtr msg);
     void onCmdVel(geometry_msgs::msg::TwistStamped::SharedPtr msg);
     void onCommand(std_msgs::msg::String::SharedPtr msg);
+    void onExternalTrajectory(
+        norlab_controllers_msgs::msg::PathSequence::SharedPtr msg,
+        const std::string& source);
 
     // ----- Command handlers -----
     void handleStartRecording();

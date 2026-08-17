@@ -100,6 +100,21 @@ The framework is divided into two phases: teach and repeat. During the teach pha
 
 During the repeat phase, the robot repeats a given route. This route can either be a map that has just been recorder or a loaded map that was saved on disk. During this phase, the system registers point clouds to the map to localize but does not update the map.
 
+### MTT trajectory and local avoidance ownership
+
+`wiln_teach_node` is the only publisher of the canonical transient-local
+`/wiln/trajectory`. A new Teach clears the previous route before recording.
+Route loading and map relocalization publish complete replacements on
+`/wiln/trajectory/loaded` and `/wiln/trajectory/corrected`; they are never
+concatenated with the active Teach session.
+
+The active Repeat controller uses WILN's curvature-checked local path deformer,
+not Nav2 MPPI. Foxglove can compare `/wiln/debug/horizon` with
+`/wiln/debug/deformed_plan`; `/wiln/replay/deformation_safe` authorizes the
+low-speed obstacle-stop bypass only while the deformed path and its clearance
+are fresh and feasible. An invalid deformation publishes the raw horizon and
+keeps the independent obstacle stop authoritative.
+
 The current WILN nodes are coordinated through a command topic, not the old
 direct service surface:
 

@@ -73,16 +73,24 @@ nav_msgs::msg::Path TrajectoryStreamer::getLocalHorizon(
     // --- Extract local horizon forward from closest ---
     double accumulated = 0.0;
     size_t idx = closest;
+    const size_t active_segment = flat_index_[closest].path_segment;
 
     while (idx < flat_index_.size()) {
+        // A DirectionalPath boundary is a real stop/direction transition, not
+        // a geometric edge to concatenate into the local horizon. Crossing it
+        // created long spikes between independent Teach segments.
+        if (flat_index_[idx].path_segment != active_segment) break;
         horizon.poses.push_back(flat_index_[idx].pose);
 
-        if (idx + 1 < flat_index_.size()) {
+        if (idx + 1 < flat_index_.size() &&
+            flat_index_[idx + 1].path_segment == active_segment) {
             const auto& pa = flat_index_[idx].pose.pose.position;
             const auto& pb = flat_index_[idx + 1].pose.pose.position;
             double dx = pb.x - pa.x;
             double dy = pb.y - pa.y;
             accumulated += std::sqrt(dx*dx + dy*dy);
+        } else {
+            break;
         }
 
         if (accumulated >= params_.horizon_length) break;

@@ -27,6 +27,8 @@
 #include <nav_msgs/msg/path.hpp>
 #include <norlab_controllers_msgs/msg/path_sequence.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
+#include <std_msgs/msg/bool.hpp>
+#include <std_msgs/msg/float32.hpp>
 #include <std_msgs/msg/float64.hpp>
 #include <std_msgs/msg/string.hpp>
 #include <std_srvs/srv/empty.hpp>
@@ -61,16 +63,14 @@ private:
 
     // ----- Latest obstacles from /wiln/obstacles -----
     std::vector<Eigen::Vector3d> latest_obstacles_;
+    rclcpp::Time obstacles_stamp_{0, 0, RCL_CLOCK_UNINITIALIZED};
+    bool obstacles_received_{false};
     std::mutex obstacles_mutex_;
 
     // ----- Cached trajectory (latched from /wiln/trajectory) -----
     norlab_controllers_msgs::msg::PathSequence cached_trajectory_;
     std::mutex traj_mutex_;
     bool traj_received_{false};
-
-    // ----- Fallback plan cache (reused when deformer fails) -----
-    nav_msgs::msg::Path last_valid_plan_;
-    std::mutex          last_valid_plan_mutex_;
 
     // ----- Callback groups -----
     rclcpp::CallbackGroup::SharedPtr stream_group_;
@@ -89,6 +89,8 @@ private:
     rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr markers_pub_;
     rclcpp::Publisher<wiln::msg::WilnState>::SharedPtr               replay_state_pub_;
     rclcpp::Publisher<wiln::msg::ReplayDiagnostics>::SharedPtr       diagnostics_pub_;
+    rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr                deformation_safe_pub_;
+    rclcpp::Publisher<std_msgs::msg::Float32>::SharedPtr             deformation_clearance_pub_;
 
     // ----- Mapper clients (async, non-blocking) -----
     rclcpp::Client<std_srvs::srv::Empty>::SharedPtr enable_mapping_client_;
@@ -101,6 +103,7 @@ private:
     std::string control_local_plan_topic_;
     double      trajectory_speed_{0.40};
     double      max_start_distance_m_{3.0};
+    double      obstacles_timeout_s_{0.5};
     bool        enable_deformation_{true};  // false = skip deformer, publish raw horizon
     bool        reenable_mapping_on_stop_{true};
     bool        debug_{false};

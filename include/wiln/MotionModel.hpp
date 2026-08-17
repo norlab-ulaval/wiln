@@ -16,7 +16,7 @@ namespace wiln {
 // ---------------------------------------------------------------------------
 struct MotionModelParams {
     double wheelbase_m              = 2.4;
-    double max_articulation_rad     = 1.047;  // 60 degrees (MTT)
+    double max_articulation_rad     = 0.733;  // 42 degrees, MTT operational safety limit (physical stop is 45°)
     double min_turn_speed_ms        = 0.25;
     bool   use_slip_heuristic       = true;
     double yaw_slip_base            = 0.10;

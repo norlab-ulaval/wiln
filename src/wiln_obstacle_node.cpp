@@ -135,8 +135,11 @@ void WilnObstacleNode::publishObstacles()
 
     ObstacleManager::Diag diag;
     auto snapshot = obstacle_manager_->getSnapshot(pose, &diag);
-    if (!snapshot || snapshot->empty()) return;
+    if (!snapshot) return;
 
+    // Publish empty snapshots too. Consumers must receive an explicit clear;
+    // otherwise the last non-empty cloud would remain a ghost obstacle after
+    // the real obstacle has moved away.
     auto cloud = toPointCloud2(*snapshot, target_frame_, now());
     obstacles_pub_->publish(cloud);
 

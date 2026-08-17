@@ -96,7 +96,9 @@ public:
         // ---- Kinematics ----
         double kappa_max_nominal  = 0.70;    // [1/m] at zero articulation
         // Physical articulation limit.  MUST match the path follower's psi_max_rad.
-        // Default 0.785 rad (45°) is conservative.  Set to 1.047 rad (60°) for MTT.
+        // Default 0.785 rad (45°) is a generic conservative value. MTT's physical
+        // stop is confirmed 45° (2026-07-20); its operational safety limit is
+        // smaller still (0.733 rad / 42°) — override via articulation_limit_rad.
         double articulation_limit = 0.785;   // [rad] — override via articulation_limit_rad param
         // Angle above which the curvature budget starts decreasing linearly.
         // Maintained proportionally to the limit (≈ 44 % of articulation_limit).

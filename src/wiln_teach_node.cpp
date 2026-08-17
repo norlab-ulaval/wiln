@@ -18,6 +18,10 @@ WilnTeachNode::WilnTeachNode() : Node("wiln_teach_node")
     const std::string cmd_vel_topic = declare_parameter("cmd_vel_topic", std::string("cmd_vel_in"));
     const std::string command_topic = declare_parameter("command_topic", std::string("/wiln/command"));
     const std::string trajectory_topic = declare_parameter("trajectory_topic", std::string("/wiln/trajectory"));
+    const std::string loaded_trajectory_topic = declare_parameter(
+        "loaded_trajectory_topic", std::string("/wiln/trajectory/loaded"));
+    const std::string corrected_trajectory_topic = declare_parameter(
+        "corrected_trajectory_topic", std::string("/wiln/trajectory/corrected"));
     const std::string global_plan_topic = declare_parameter("global_plan_topic", std::string("/wiln/global_plan"));
     const std::string state_topic = declare_parameter("state_topic", std::string("/wiln/teach/state"));
 
@@ -47,6 +51,19 @@ WilnTeachNode::WilnTeachNode() : Node("wiln_teach_node")
     command_sub_ = create_subscription<std_msgs::msg::String>(
         command_topic, cmd_qos,
         [this](std_msgs::msg::String::SharedPtr msg) { onCommand(msg); });
+
+    loaded_trajectory_sub_ =
+        create_subscription<norlab_controllers_msgs::msg::PathSequence>(
+        loaded_trajectory_topic, transient_qos,
+        [this](norlab_controllers_msgs::msg::PathSequence::SharedPtr msg) {
+            onExternalTrajectory(msg, "route_load");
+        });
+    corrected_trajectory_sub_ =
+        create_subscription<norlab_controllers_msgs::msg::PathSequence>(
+        corrected_trajectory_topic, transient_qos,
+        [this](norlab_controllers_msgs::msg::PathSequence::SharedPtr msg) {
+            onExternalTrajectory(msg, "relocalizer");
+        });
 
     // --- Publishers ---
     trajectory_pub_  = create_publisher<norlab_controllers_msgs::msg::PathSequence>(
@@ -96,6 +113,26 @@ void WilnTeachNode::onCommand(std_msgs::msg::String::SharedPtr msg)
     else if (cmd == "clear_trajectory")  handleClearTrajectory();
 }
 
+void WilnTeachNode::onExternalTrajectory(
+    norlab_controllers_msgs::msg::PathSequence::SharedPtr msg,
+    const std::string& source)
+{
+    if (state_.load() == State::RECORDING) {
+        RCLCPP_WARN(get_logger(),
+            "Ignoring %s trajectory while Teach is recording.", source.c_str());
+        return;
+    }
+
+    recorder_->setTrajectory(*msg);
+    publishTrajectory(*msg);
+    publishState(wiln::msg::WilnState::IDLE, "trajectory replaced from " + source);
+    size_t total = 0;
+    for (const auto& path : msg->paths) total += path.poses.size();
+    RCLCPP_INFO(get_logger(),
+        "Canonical trajectory replaced from %s: %zu segment(s), %zu poses.",
+        source.c_str(), msg->paths.size(), total);
+}
+
 // ---------------------------------------------------------------------------
 // Handlers
 // ---------------------------------------------------------------------------
@@ -108,6 +145,9 @@ void WilnTeachNode::handleStartRecording()
         return;
     }
     recorder_->start();
+    // Clear every downstream transient cache immediately. The new Teach is a
+    // replacement session, never an append to a loaded or previously taught route.
+    publishTrajectory(recorder_->getTrajectory());
     publishState(wiln::msg::WilnState::RECORDING, "recording");
     RCLCPP_INFO(get_logger(), "Recording started.");
 }
@@ -168,6 +208,7 @@ void WilnTeachNode::handleClearTrajectory()
         return;
     }
     recorder_->clear();
+    publishTrajectory(recorder_->getTrajectory());
     publishState(wiln::msg::WilnState::IDLE, "trajectory cleared");
     RCLCPP_INFO(get_logger(), "Trajectory cleared.");
 }

@@ -34,6 +34,11 @@ WilnReplayNode::WilnReplayNode() : Node("wiln_replay_node")
     const std::string markers_topic = declare_parameter("markers_topic", std::string("/wiln/markers"));
     const std::string state_topic = declare_parameter("state_topic", std::string("/wiln/replay/state"));
     const std::string diagnostics_topic = declare_parameter("diagnostics_topic", std::string("/wiln/replay/diagnostics"));
+    const std::string deformation_safe_topic = declare_parameter(
+        "deformation_safe_topic", std::string("/wiln/replay/deformation_safe"));
+    const std::string deformation_clearance_topic = declare_parameter(
+        "deformation_clearance_topic", std::string("/wiln/replay/deformation_clearance_m"));
+    obstacles_timeout_s_ = declare_parameter("obstacles_timeout_s", 0.5);
     double kappa_max          = declare_parameter("kappa_max",                 0.70);
     std::string robot_type    = declare_parameter("robot_model",               std::string("generic"));
     double articulation_limit = declare_parameter("articulation_limit_rad",    0.785);
@@ -41,6 +46,15 @@ WilnReplayNode::WilnReplayNode() : Node("wiln_replay_node")
     double max_deformation_step  = declare_parameter("max_deformation_step",  0.25);
     double max_total_deformation = declare_parameter("max_total_deformation", 1.0);
     double time_budget_ms        = declare_parameter("time_budget_ms",         8.0);
+    double attraction_gain       = declare_parameter("attraction_gain",        1.5);
+    double repulsion_gain        = declare_parameter("repulsion_gain",         1.2);
+    double repulsion_dist        = declare_parameter("repulsion_dist",         1.5);
+    double internal_force        = declare_parameter("internal_force",         0.5);
+    double influence_longitudinal = declare_parameter(
+        "influence_longitudinal_m", 3.0);
+    double obstacle_margin       = declare_parameter("obstacle_margin_m",      0.25);
+    double deformation_step_size = declare_parameter("deformation_step_size", 1.0);
+    int max_deformation_iterations = declare_parameter("max_deformation_iterations", 30);
     int search_window_bw         = declare_parameter("search_window_backward", 10);
     int search_window_fw         = declare_parameter("search_window_forward",  80);
 
@@ -66,6 +80,14 @@ WilnReplayNode::WilnReplayNode() : Node("wiln_replay_node")
     deform_params.max_deformation_step  = max_deformation_step;
     deform_params.max_total_deformation = max_total_deformation;
     deform_params.time_budget_ms        = time_budget_ms;
+    deform_params.attraction_gain       = attraction_gain;
+    deform_params.repulsion_gain        = repulsion_gain;
+    deform_params.repulsion_dist        = repulsion_dist;
+    deform_params.internal_force        = internal_force;
+    deform_params.influence_longitudinal = influence_longitudinal;
+    deform_params.obstacle_margin       = obstacle_margin;
+    deform_params.step_size             = deformation_step_size;
+    deform_params.max_iterations        = max_deformation_iterations;
     deformer_ = std::make_unique<PathDeformer>(deform_params);
 
     robot_model_ = makeRobotModel(robot_type, kappa_max, articulation_limit);
@@ -114,6 +136,10 @@ WilnReplayNode::WilnReplayNode() : Node("wiln_replay_node")
     markers_pub_       = create_publisher<visualization_msgs::msg::MarkerArray>(markers_topic, rt_qos);
     replay_state_pub_  = create_publisher<wiln::msg::WilnState>(state_topic, transient_qos);
     diagnostics_pub_   = create_publisher<wiln::msg::ReplayDiagnostics>(diagnostics_topic, rt_qos);
+    deformation_safe_pub_ = create_publisher<std_msgs::msg::Bool>(
+        deformation_safe_topic, rt_qos);
+    deformation_clearance_pub_ = create_publisher<std_msgs::msg::Float32>(
+        deformation_clearance_topic, rt_qos);
 
     // --- Mapper clients ---
     enable_mapping_client_  = create_client<std_srvs::srv::Empty>(enable_mapping_svc);
@@ -147,6 +173,8 @@ void WilnReplayNode::onObstacles(sensor_msgs::msg::PointCloud2::SharedPtr msg)
     auto pts = fromPointCloud2(*msg);
     std::lock_guard<std::mutex> lock(obstacles_mutex_);
     latest_obstacles_ = std::move(pts);
+    obstacles_stamp_ = now();
+    obstacles_received_ = true;
 }
 
 void WilnReplayNode::onTrajectory(
@@ -268,12 +296,6 @@ void WilnReplayNode::stopReplay()
 {
     state_.store(State::IDLE);
 
-    // Clear fallback plan
-    {
-        std::lock_guard<std::mutex> lk(last_valid_plan_mutex_);
-        last_valid_plan_.poses.clear();
-    }
-
     // A teach/repeat session should normally keep the taught map immutable even
     // after completion/abort. The repeat supervisor explicitly re-enables map
     // insertion at the next teach_start.
@@ -314,15 +336,18 @@ void WilnReplayNode::streamLoop()
 
     // Obstacles snapshot
     std::vector<Eigen::Vector3d> obstacles;
+    bool obstacles_fresh = false;
     {
         std::lock_guard<std::mutex> lock(obstacles_mutex_);
         obstacles = latest_obstacles_;
+        obstacles_fresh = obstacles_received_ &&
+            (now() - obstacles_stamp_).seconds() <= obstacles_timeout_s_;
     }
 
     nav_msgs::msg::Path safe_plan;
     PathDeformer::Diag  deform_diag;
 
-    if (enable_deformation_) {
+    if (enable_deformation_ && obstacles_fresh) {
         // Deform (time-budgeted obstacle avoidance)
         safe_plan = deformer_->deform(horizon, obstacles, &deform_diag);
         safe_plan.header.stamp = now();
@@ -334,24 +359,28 @@ void WilnReplayNode::streamLoop()
                 deform_diag.time_budget_exceeded ? "yes" : "no");
         }
 
-        // Fallback cache
-        bool plan_valid = !deform_diag.used_fallback && safe_plan.poses.size() >= 3;
-        {
-            std::lock_guard<std::mutex> lk(last_valid_plan_mutex_);
-            if (plan_valid) {
-                last_valid_plan_ = safe_plan;
-            } else if (!last_valid_plan_.poses.empty()) {
-                safe_plan = last_valid_plan_;
-            }
-        }
+        // Never reuse a previous deformed plan after validation failure: its
+        // obstacle snapshot is already stale.
+    } else if (enable_deformation_) {
+        safe_plan = horizon;
+        safe_plan.header.stamp = now();
+        deform_diag.used_fallback = true;
+        deform_diag.path_is_clear = false;
     } else {
         // Deformer disabled — publish raw horizon as control plan (no obstacle deformation).
-        // PathFollower is already configured to follow the global trajectory directly
-        // (local_plan_topic points to a non-existent topic), so this publish is for
-        // completeness / debug visibility only.
         safe_plan = horizon;
         safe_plan.header.stamp = now();
     }
+
+    const bool deformation_safe = enable_deformation_ && obstacles_fresh &&
+        !deform_diag.used_fallback && deform_diag.path_is_clear;
+    std_msgs::msg::Bool deformation_safe_msg;
+    deformation_safe_msg.data = deformation_safe;
+    deformation_safe_pub_->publish(deformation_safe_msg);
+    std_msgs::msg::Float32 deformation_clearance_msg;
+    deformation_clearance_msg.data = std::isfinite(deform_diag.min_clearance_m) ?
+        static_cast<float>(deform_diag.min_clearance_m) : -1.0F;
+    deformation_clearance_pub_->publish(deformation_clearance_msg);
 
     // Publish control plan
     control_plan_pub_->publish(safe_plan);
@@ -370,6 +399,11 @@ void WilnReplayNode::streamLoop()
         diag_msg.deform_time_ms      = deform_diag.deform_time_ms;
         diag_msg.obstacle_count      = static_cast<uint32_t>(obstacles.size());
         diag_msg.max_displacement_m  = deform_diag.max_displacement_m;
+        diag_msg.min_clearance_m     = std::isfinite(deform_diag.min_clearance_m) ?
+            deform_diag.min_clearance_m : -1.0;
+        diag_msg.max_curvature_m_inv = deform_diag.max_curvature_m_inv;
+        diag_msg.avoidance_side      = deform_diag.avoidance_side;
+        diag_msg.deformation_safe    = deformation_safe;
         diag_msg.deform_fallback     = deform_diag.used_fallback;
         diag_msg.time_budget_exceeded = deform_diag.time_budget_exceeded;
         diag_msg.kappa_max_current   = robot_model_ ? robot_model_->kappaMax() : 0.0;

@@ -1,6 +1,8 @@
 #include "wiln/PathDeformer.hpp"
+#include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <limits>
 #include <tf2/LinearMath/Quaternion.h>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 
@@ -9,7 +11,6 @@ namespace wiln {
 PathDeformer::PathDeformer(const Params& params) : params_(params) {
     points_buf_.reserve(256);
     reference_buf_.reserve(256);
-    new_points_buf_.reserve(256);
 }
 
 // ---------------------------------------------------------------------------
@@ -34,7 +35,11 @@ nav_msgs::msg::Path PathDeformer::deform(const nav_msgs::msg::Path&         orig
                                           const std::vector<Eigen::Vector3d>& obstacles,
                                           Diag* diag)
 {
-    auto t0 = std::chrono::steady_clock::now();
+    const auto t0 = std::chrono::steady_clock::now();
+    const auto elapsed_ms = [&t0]() {
+        return std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - t0).count();
+    };
 
     // --- Validity guard ---
     if (!isValidPath(original_path)) {
@@ -44,9 +49,10 @@ nav_msgs::msg::Path PathDeformer::deform(const nav_msgs::msg::Path&         orig
 
     const size_t N = original_path.poses.size();
 
-    // --- Populate buffers (reuse existing capacity) ---
+    // Populate reusable buffers and reference-path normals.
     points_buf_.resize(N);
     reference_buf_.resize(N);
+    std::vector<Eigen::Vector2d> normals(N, Eigen::Vector2d::Zero());
     for (size_t i = 0; i < N; ++i) {
         Eigen::Vector3d pt(
             original_path.poses[i].pose.position.x,
@@ -54,6 +60,18 @@ nav_msgs::msg::Path PathDeformer::deform(const nav_msgs::msg::Path&         orig
             original_path.poses[i].pose.position.z);
         points_buf_[i]    = pt;
         reference_buf_[i] = pt;
+
+        const size_t before = i == 0 ? 0 : i - 1;
+        const size_t after = i + 1 < N ? i + 1 : N - 1;
+        Eigen::Vector2d tangent(
+            original_path.poses[after].pose.position.x -
+                original_path.poses[before].pose.position.x,
+            original_path.poses[after].pose.position.y -
+                original_path.poses[before].pose.position.y);
+        if (tangent.norm() > params_.min_segment_length) {
+            tangent.normalize();
+            normals[i] = Eigen::Vector2d(-tangent.y(), tangent.x());
+        }
     }
 
     if (diag) {
@@ -61,34 +79,159 @@ nav_msgs::msg::Path PathDeformer::deform(const nav_msgs::msg::Path&         orig
         diag->horizon_points  = N;
     }
 
-    // --- Elastic band iterations ---
-    for (int iter = 0; iter < params_.max_iterations; ++iter) {
-        // Time-budget check (every 2 iterations to amortize chrono overhead)
-        if ((iter & 1) == 0) {
-            auto elapsed = std::chrono::duration<double, std::milli>(
-                std::chrono::steady_clock::now() - t0).count();
-            if (elapsed > params_.time_budget_ms) {
-                if (diag) { diag->time_budget_exceeded = true; diag->used_fallback = true; }
-                return original_path;
+    if (obstacles.empty()) {
+        if (diag) {
+            diag->deform_time_ms = elapsed_ms();
+            diag->path_is_clear = true;
+        }
+        return original_path;
+    }
+
+    // Build density-invariant lateral requirements. Summing every LiDAR point
+    // made the old force saturate according to cloud density and flip side at
+    // adjacent samples. Here the whole horizon chooses one bypass side.
+    const double robot_half_width = robot_model_ ? 0.5 * robot_model_->bodyWidth() : 0.5;
+    const double required_clearance = robot_half_width + params_.obstacle_margin;
+    std::vector<double> left_need(N, 0.0);
+    std::vector<double> right_need(N, 0.0);
+    bool obstacle_relevant = false;
+
+    for (size_t i = 1; i + 1 < N; ++i) {
+        if (normals[i].squaredNorm() < 0.5) continue;
+        const Eigen::Vector2d tangent(normals[i].y(), -normals[i].x());
+        const Eigen::Vector2d path_xy(reference_buf_[i].x(), reference_buf_[i].y());
+        for (const auto& obstacle : obstacles) {
+            const Eigen::Vector2d delta = obstacle.head<2>() - path_xy;
+            const double longitudinal = delta.dot(tangent);
+            const double lateral = delta.dot(normals[i]);
+            if (std::abs(longitudinal) > params_.influence_longitudinal ||
+                std::abs(lateral) > params_.repulsion_dist)
+            {
+                continue;
             }
+            obstacle_relevant = true;
+            const double phase = M_PI * std::abs(longitudinal) /
+                std::max(params_.influence_longitudinal, 1e-6);
+            const double profile = 0.5 * (1.0 + std::cos(phase));
+            left_need[i] = std::max(
+                left_need[i], profile * (lateral + required_clearance));
+            right_need[i] = std::max(
+                right_need[i], profile * (required_clearance - lateral));
         }
-
-        performElasticIteration(points_buf_, reference_buf_, obstacles);
-        applyKinematicConstraints(points_buf_);
     }
 
-    // --- Max total deformation guard ---
+    if (!obstacle_relevant) {
+        if (diag) {
+            diag->deform_time_ms = elapsed_ms();
+            diag->path_is_clear = true;
+        }
+        return original_path;
+    }
+
+    const double left_peak = *std::max_element(left_need.begin(), left_need.end());
+    const double right_peak = *std::max_element(right_need.begin(), right_need.end());
+    const int side = left_peak < right_peak ? 1 : -1;
+    const auto& selected_need = side > 0 ? left_need : right_need;
+    const double selected_peak = side > 0 ? left_peak : right_peak;
+    const double clearance_gain = std::max(params_.repulsion_gain, 1.0);
+    if (diag) diag->avoidance_side = side;
+
+    // If neither side fits inside the configured corridor, refuse to invent a
+    // clipped path. The independent obstacle stop remains authoritative.
+    if (selected_peak * clearance_gain > params_.max_total_deformation + 1e-6) {
+        if (diag) {
+            diag->used_fallback = true;
+            diag->path_is_clear = false;
+            diag->deform_time_ms = elapsed_ms();
+        }
+        return original_path;
+    }
+
+    std::vector<double> target_offset(N, 0.0);
+    std::vector<double> offset(N, 0.0);
+    for (size_t i = 1; i + 1 < N; ++i) {
+        target_offset[i] = static_cast<double>(side) *
+            std::clamp(
+            selected_need[i] * clearance_gain,
+            0.0,
+            params_.max_total_deformation);
+        offset[i] = target_offset[i];
+    }
+
+    // Solve a one-dimensional elastic band over lateral offsets. A single
+    // signed field plus neighbour regularization cannot create alternating
+    // left/right spikes. Anchors remain exactly on the Teach path.
+    for (int iteration = 0; iteration < params_.max_iterations; ++iteration) {
+        if ((iteration & 3) == 0 && elapsed_ms() > params_.time_budget_ms) {
+            if (diag) {
+                diag->time_budget_exceeded = true;
+                diag->used_fallback = true;
+                diag->path_is_clear = false;
+                diag->deform_time_ms = elapsed_ms();
+            }
+            return original_path;
+        }
+        std::vector<double> next = offset;
+        for (size_t i = 1; i + 1 < N; ++i) {
+            const double denominator = params_.attraction_gain +
+                2.0 * params_.internal_force;
+            const double equilibrium =
+                (params_.attraction_gain * target_offset[i] +
+                params_.internal_force * (offset[i - 1] + offset[i + 1])) /
+                std::max(denominator, 1e-6);
+            const double step = std::clamp(
+                equilibrium - offset[i],
+                -params_.max_deformation_step,
+                params_.max_deformation_step);
+            next[i] = std::clamp(
+                offset[i] + params_.step_size * step,
+                -params_.max_total_deformation,
+                params_.max_total_deformation);
+        }
+        offset.swap(next);
+    }
+
     double max_disp = 0.0;
-    for (size_t i = 1; i < N - 1; ++i) {  // skip anchors
-        double d = (points_buf_[i] - reference_buf_[i]).head<2>().norm();  // XY only
-        max_disp = std::max(max_disp, d);
-        if (d > params_.max_total_deformation) {
-            // Reset this point back to reference
-            points_buf_[i] = reference_buf_[i];
-        }
+    for (size_t i = 1; i + 1 < N; ++i) {
+        points_buf_[i].x() += normals[i].x() * offset[i];
+        points_buf_[i].y() += normals[i].y() * offset[i];
+        max_disp = std::max(max_disp, std::abs(offset[i]));
     }
 
-    // --- Build result ---
+    double max_curvature = 0.0;
+    for (size_t i = 1; i + 1 < N; ++i) {
+        const Eigen::Vector2d a = points_buf_[i].head<2>() - points_buf_[i - 1].head<2>();
+        const Eigen::Vector2d b = points_buf_[i + 1].head<2>() - points_buf_[i].head<2>();
+        const Eigen::Vector2d c = points_buf_[i + 1].head<2>() - points_buf_[i - 1].head<2>();
+        const double denominator = a.norm() * b.norm() * c.norm();
+        if (denominator <= 1e-9) continue;
+        const double cross = a.x() * b.y() - a.y() * b.x();
+        max_curvature = std::max(max_curvature, std::abs(2.0 * cross / denominator));
+    }
+
+    double min_clearance = std::numeric_limits<double>::infinity();
+    for (const auto& point : points_buf_) {
+        for (const auto& obstacle : obstacles) {
+            min_clearance = std::min(
+                min_clearance, (point - obstacle).head<2>().norm());
+        }
+    }
+    const bool curvature_feasible = max_curvature <= effectiveKappaMax() * 1.05;
+    const bool clearance_feasible = min_clearance >= required_clearance;
+    if (diag) {
+        diag->max_displacement_m = max_disp;
+        diag->min_clearance_m = min_clearance;
+        diag->max_curvature_m_inv = max_curvature;
+        diag->path_is_clear = curvature_feasible && clearance_feasible;
+    }
+    if (!curvature_feasible || !clearance_feasible) {
+        if (diag) {
+            diag->used_fallback = true;
+            diag->deform_time_ms = elapsed_ms();
+        }
+        return original_path;
+    }
+
     nav_msgs::msg::Path result = original_path;
     for (size_t i = 0; i < N; ++i) {
         result.poses[i].pose.position.x = points_buf_[i].x();
@@ -99,96 +242,11 @@ nav_msgs::msg::Path PathDeformer::deform(const nav_msgs::msg::Path&         orig
 
     updateOrientations(result, points_buf_);
 
-    auto t1 = std::chrono::steady_clock::now();
     if (diag) {
-        diag->deform_time_ms     = std::chrono::duration<double, std::milli>(t1 - t0).count();
-        diag->max_displacement_m = max_disp;
+        diag->deform_time_ms = elapsed_ms();
     }
 
     return result;
-}
-
-// ---------------------------------------------------------------------------
-void PathDeformer::performElasticIteration(std::vector<Eigen::Vector3d>&       points,
-                                            const std::vector<Eigen::Vector3d>& reference,
-                                            const std::vector<Eigen::Vector3d>& obstacles)
-{
-    const size_t N = points.size();
-    new_points_buf_.resize(N);
-    new_points_buf_ = points;
-
-    // Skip hard anchors at index 0 and N-1
-    for (size_t i = 1; i < N - 1; ++i) {
-        Eigen::Vector3d force = Eigen::Vector3d::Zero();
-
-        // 1. Internal (spring smoothing) — 3D
-        force += params_.internal_force * (points[i-1] + points[i+1] - 2.0 * points[i]);
-
-        // 2. Attraction back to reference — 3D (keeps Z as well)
-        force += params_.attraction_gain * (reference[i] - points[i]);
-
-        // 3. Repulsion from obstacles — XY only (no Z component)
-        for (const auto& obs : obstacles) {
-            Eigen::Vector2d diff2d(points[i].x() - obs.x(),
-                                   points[i].y() - obs.y());
-            double dist2d = diff2d.norm();
-            if (dist2d < params_.repulsion_dist && dist2d > 1e-4) {
-                double magnitude = params_.repulsion_gain *
-                                   (params_.repulsion_dist - dist2d) / dist2d;
-                // Apply only in XY
-                force.x() += magnitude * diff2d.x();
-                force.y() += magnitude * diff2d.y();
-                // force.z() intentionally untouched
-            }
-        }
-
-        // Clamp per-step displacement
-        Eigen::Vector3d delta = params_.step_size * force;
-        double delta_norm = delta.norm();
-        if (delta_norm > params_.max_deformation_step) {
-            delta *= params_.max_deformation_step / delta_norm;
-        }
-
-        new_points_buf_[i] = points[i] + delta;
-    }
-    points = new_points_buf_;
-}
-
-// ---------------------------------------------------------------------------
-void PathDeformer::applyKinematicConstraints(std::vector<Eigen::Vector3d>& points)
-{
-    const size_t N = points.size();
-    double kappa_max = effectiveKappaMax();
-
-    for (size_t i = 1; i < N - 1; ++i) {
-        Eigen::Vector3d v1 = points[i]   - points[i-1];
-        Eigen::Vector3d v2 = points[i+1] - points[i];
-
-        double d1 = v1.norm();
-        if (d1 < params_.min_segment_length) continue;
-
-        // Numerically stable angle via atan2 — never NaN, stable near 0 and π
-        double cross_z = v1.x() * v2.y() - v1.y() * v2.x();  // 2D cross product z
-        double dot_xy  = v1.x() * v2.x() + v1.y() * v2.y();
-        double angle = std::atan2(std::abs(cross_z), dot_xy);
-        double max_angle = kappa_max * d1;
-
-        if (angle > max_angle && std::isfinite(max_angle)) {
-            double yaw1 = std::atan2(v1.y(), v1.x());
-            double yaw2 = std::atan2(v2.y(), v2.x());
-            double dyaw = yaw2 - yaw1;
-            while (dyaw >  M_PI) dyaw -= 2.0 * M_PI;
-            while (dyaw < -M_PI) dyaw += 2.0 * M_PI;
-
-            double clamped_yaw = yaw1 + (dyaw >= 0.0 ? max_angle : -max_angle);
-            double len2 = v2.norm();
-            if (len2 > params_.min_segment_length) {
-                points[i+1].x() = points[i].x() + len2 * std::cos(clamped_yaw);
-                points[i+1].y() = points[i].y() + len2 * std::sin(clamped_yaw);
-                // Z of i+1 preserved
-            }
-        }
-    }
 }
 
 // ---------------------------------------------------------------------------

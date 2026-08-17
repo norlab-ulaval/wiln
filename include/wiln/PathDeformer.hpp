@@ -11,15 +11,14 @@
  *   - A time budget guards the 10 Hz loop; if exceeded the original horizon
  *     is returned unchanged and the caller is informed.
  *
- * NOTE (architectural): the deformed plan published on wiln/deformed_plan is
- * currently DIAGNOSTIC-ONLY.  The path follower (mtt_path_follower) receives
- * the full trajectory via the FollowPath action and does its own tracking.
- * The deformed plan is visualised in Foxglove to confirm obstacle avoidance
- * behaviour before it is wired into a replanning loop.
+ * The replay node publishes the result on /wiln/control/local_plan. When the
+ * path follower is configured with that topic, it uses the fresh deformed
+ * horizon for steering and holds zero if the stream later becomes stale.
  */
 
 #include "wiln/RobotModel.hpp"
 #include <Eigen/Dense>
+#include <limits>
 #include <nav_msgs/msg/path.hpp>
 #include <vector>
 
@@ -33,6 +32,8 @@ public:
         double repulsion_gain   = 2.0;   // push away from obstacles
         double repulsion_dist   = 1.5;   // [m] repulsion onset distance
         double internal_force   = 0.5;   // spring smoothing
+        double influence_longitudinal = 3.0; // [m] smooth bypass lead/trail distance
+        double obstacle_margin        = 0.25; // [m] outside robot half-width
 
         // ---- Iteration control ----
         int    max_iterations          = 5;
@@ -51,6 +52,10 @@ public:
         size_t obstacle_count       = 0;
         size_t horizon_points       = 0;
         double max_displacement_m   = 0.0;
+        double min_clearance_m      = std::numeric_limits<double>::infinity();
+        double max_curvature_m_inv  = 0.0;
+        int    avoidance_side       = 0;  // +1 left, -1 right, 0 no bypass
+        bool   path_is_clear        = true;
         bool   time_budget_exceeded = false;
         bool   used_fallback        = false;
     };
@@ -78,16 +83,8 @@ private:
     // Pre-allocated buffers (avoid heap inside 10 Hz loop)
     std::vector<Eigen::Vector3d> points_buf_;
     std::vector<Eigen::Vector3d> reference_buf_;
-    std::vector<Eigen::Vector3d> new_points_buf_;
 
     double effectiveKappaMax() const;
-
-    void performElasticIteration(std::vector<Eigen::Vector3d>&        points,
-                                 const std::vector<Eigen::Vector3d>&  reference,
-                                 const std::vector<Eigen::Vector3d>&  obstacles);
-
-    // Numerically stable curvature constraint (atan2-based, XY plane)
-    void applyKinematicConstraints(std::vector<Eigen::Vector3d>& points);
 
     // Frenet-Serret adapted frames for correct 3D orientation
     void updateOrientations(nav_msgs::msg::Path&                     path,
