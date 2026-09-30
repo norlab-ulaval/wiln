@@ -19,7 +19,3 @@ repositories:
     type: git
     url: git@github.com:norlab-ulaval/pointcloud_motion_deskew.git
     version: humble
-  service_caller:
-    type: git
-    url: git@github.com:norlab-ulaval/service_caller.git
-    version: master

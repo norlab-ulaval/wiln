@@ -86,12 +86,16 @@ The following table lists the various ROS services that enable the teach-and-rep
 | :----------- | :---------- | :--------- |
 | /start_recording | Starts recording poses to build the reference map (cannot be called if another trajectory is already loaded). | None |
 | /stop_recording | Stops the trajectory recording (cannot be called is the recording was not started). | None                 |
-| /clear_trajectory | Clears the current trajectory from active memory. | None                 |
-| /play_trajectory | Starts the repeat phase. The robot will repeat the trajectory backwards if it is located at it's end and the system supports both forwards or reverse motion. | None |
-| /play_loop_trajectory | Starts the repeat phase for a loop trajectory. | nbLoops (uint32)     |
+| /play_line | Starts the repeat phase. The robot will repeat the trajectory backwards if it is located at it's end and the system supports both forwards or reverse motion. | None |
+| /play_loop | Starts the repeat phase for a loop trajectory. | nb_loops (uint32)     |
 | /cancel_trajectory | Cancels the current repeat phase in the event of system failure. | None  |
-| /save_ltr | Saves the current map and trajectory in a `.ltr` file. If no directory is specified, the file will be saved in the `home/<user>/.ros` directory. | `file_name` (string) |
-| /load_ltr | loads a specicied `.ltr` file (cannot be executed if a map/trajectory is already loaded). If not directory is specified, will load from the `home/<user>/.ros` directory. | `file_name` (string) |
+| /clear_trajectory | Clears the current trajectory from active memory. | None  |
+| /smooth_trajectory | Smooths the current trajectory using a low-pass filter. | None  |
+| /flip_trajectory | Flips the orientations of all the poses in the trajectory, without altering their order. | None  |
+| /reverse_trajectory | Reverses the order of the poses in the trajectory, without altering their orientation. | None  |
+| /save_map_traj | Saves the current map and trajectory in a `.ltr` file. | `file_name` (string) |
+| /load_map_traj | loads a specicied `.ltr` file. Assumes the robot is at the start of the trajectory. | `file_name` (string) |
+| /load_map_traj_from_end | loads a specicied `.ltr` file. Assumes the robot is at the en of the trajectory. | `file_name` (string) |
 
 ## Citing
 
