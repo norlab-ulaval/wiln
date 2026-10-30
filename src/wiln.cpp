@@ -27,6 +27,7 @@ void WilnNode::initParameters()
     this->declare_parameter("follow_path_topic", "/follow_path");
     this->declare_parameter("loop_closure_linear_tolerance", 5.0);
     this->declare_parameter("loop_closure_angular_tolerance", M_PI / 4);
+    this->declare_parameter("flip_trajectory_to_heading", true);
     updateParameters();
 }
 
@@ -40,6 +41,7 @@ void WilnNode::updateParameters()
     this->get_parameter("follow_path_topic", followPathTopic);
     this->get_parameter("loop_closure_linear_tolerance", loopClosureLinearTolerance);
     this->get_parameter("loop_closure_angular_tolerance", loopClosureAngularTolerance);
+    this->get_parameter("flip_trajectory_to_heading", flipTrajectoryToHeading);
 }
 
 void WilnNode::initSubscribers()
@@ -744,7 +746,7 @@ void WilnNode::playLine()
     // Flip trajectory if angle_diff is larger than M_PI/2
     auto [lin_dist_final, ang_dist_final] = diffBetweenPoses(robotPose.pose, lineTrajectory.poses.front().pose);
     RCLCPP_INFO(this->get_logger(), " -> Angle error: %f", ang_dist_final);
-    if (std::fabs(ang_dist_final) > M_PI/2)
+    if (flipTrajectoryToHeading && std::fabs(ang_dist_final) > M_PI/2)
     {
         RCLCPP_INFO(this->get_logger(), "Flipping trajectory.");
         lineTrajectory = flipPath(lineTrajectory);
