@@ -9,4 +9,5 @@
       smoothing_window_size: 9
       loop_closure_linear_tolerance: 5.0
       loop_closure_angular_tolerance: 1.58
+      flip_trajectory_to_heading: true
 

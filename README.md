@@ -86,7 +86,7 @@ The following table lists the various ROS services that enable the teach-and-rep
 | :----------- | :---------- | :--------- |
 | /start_recording | Starts recording poses to build the reference map (cannot be called if another trajectory is already loaded). | None |
 | /stop_recording | Stops the trajectory recording (cannot be called is the recording was not started). | None                 |
-| /play_line | Starts the repeat phase. The robot will repeat the trajectory backwards if it is located at it's end and the system supports both forwards or reverse motion. | None |
+| /play_line | Starts the repeat phase. The robot will repeat the trajectory backwards if it is located at it's end and the system supports both forwards or reverse motion. It is flipped if the robot faces away from its start, unless `flip_trajectory_to_heading` is false. | None |
 | /play_loop | Starts the repeat phase for a loop trajectory. | nb_loops (uint32)     |
 | /cancel_trajectory | Cancels the current repeat phase in the event of system failure. | None  |
 | /clear_trajectory | Clears the current trajectory from active memory. | None  |

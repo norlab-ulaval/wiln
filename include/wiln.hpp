@@ -75,6 +75,7 @@ private:
     int smoothingWindowSize;
     float loopClosureLinearTolerance;
     float loopClosureAngularTolerance;
+    bool flipTrajectoryToHeading;
 
     void initParameters();
     void updateParameters();
