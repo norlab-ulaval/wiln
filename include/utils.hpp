@@ -8,7 +8,7 @@
 #include <nav_msgs/msg/path.hpp>
 
 inline double wrapToPi(double angle) {
-    return fmod(angle + M_PI, 2.0 * M_PI) - M_PI;
+    return std::remainder(angle, 2.0 * M_PI);
 }
 
 std::tuple<double, double, double> quatToRPY(const geometry_msgs::msg::Quaternion &q)
